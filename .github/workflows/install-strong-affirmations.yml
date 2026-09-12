@@ -22,3 +22,5 @@ jobs:
           git add index.html
           git commit -m 'Strengthen affirmation wording'
           git push
+
+# retry with curated source files
