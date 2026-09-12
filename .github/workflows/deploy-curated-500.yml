@@ -1,0 +1,24 @@
+name: Deploy curated 500 affirmations
+
+on:
+  push:
+    paths:
+      - '.github/workflows/deploy-curated-500.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install curated corpus
+        run: python .github/deploy_curated_500.py
+      - name: Commit corpus
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html
+          git commit -m 'Install curated 500 affirmation corpus'
+          git push
