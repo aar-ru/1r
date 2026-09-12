@@ -22,3 +22,5 @@ jobs:
           git add index.html .github/deploy_curated_500.py
           git commit -m 'Polish curated affirmation wording'
           git push
+
+# editorial retry 2
