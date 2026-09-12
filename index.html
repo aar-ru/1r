@@ -846,7 +846,9 @@
     let initialHintVisible = true;
 
     // Session + daily active reading time. Daily total persists across reloads.
+    // A session also ends after 30 seconds without interaction, even if the tab stays focused.
     const DAILY_TIME_PREFIX = 'affirm_daily_time_v1:';
+    const IDLE_TIMEOUT_MS = 30_000;
 
     function localDateKey() {
       const d = new Date();
@@ -861,6 +863,8 @@
     let sessionElapsedMs = 0;
     let activeStartedAt = performance.now();
     let sessionRunning = !document.hidden && document.hasFocus();
+    let lastActivityAt = activeStartedAt;
+    let idleTimer = null;
     let viewedCount = 0;
     const viewedCards = new WeakSet();
     let lastDailyPersist = 0;
@@ -875,7 +879,7 @@
     }
 
     function activeDelta(now = performance.now()) {
-      return sessionRunning ? now - activeStartedAt : 0;
+      return sessionRunning ? Math.max(0, now - activeStartedAt) : 0;
     }
 
     function currentSessionElapsedMs(now = performance.now()) {
@@ -895,7 +899,7 @@
       if (nextKey === dayKey) return;
       const now = performance.now();
       if (sessionRunning) {
-        const delta = now - activeStartedAt;
+        const delta = Math.max(0, now - activeStartedAt);
         sessionElapsedMs += delta;
         dayElapsedMs += delta;
         activeStartedAt = now;
@@ -919,11 +923,9 @@
       }
     }
 
-    function endSessionOnUnfocus() {
-      rollDayIfNeeded();
+    function stopRunningSession(endAt = performance.now()) {
       if (!sessionRunning) return;
-      const now = performance.now();
-      const delta = now - activeStartedAt;
+      const delta = Math.max(0, endAt - activeStartedAt);
       sessionElapsedMs += delta;
       dayElapsedMs += delta;
       sessionRunning = false;
@@ -931,16 +933,68 @@
       updateSessionStats();
     }
 
+    function clearIdleTimer() {
+      if (idleTimer !== null) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
+    }
+
+    function endSessionOnIdle() {
+      if (!sessionRunning) return;
+      const now = performance.now();
+      const idleFor = now - lastActivityAt;
+      if (idleFor + 100 < IDLE_TIMEOUT_MS) {
+        scheduleIdleCheck();
+        return;
+      }
+      // Count up to the 30-second reading grace period, not the time left open after it.
+      const endAt = Math.min(now, lastActivityAt + IDLE_TIMEOUT_MS);
+      stopRunningSession(endAt);
+      clearIdleTimer();
+    }
+
+    function scheduleIdleCheck() {
+      clearIdleTimer();
+      if (!sessionRunning) return;
+      const remaining = Math.max(0, IDLE_TIMEOUT_MS - (performance.now() - lastActivityAt));
+      idleTimer = setTimeout(endSessionOnIdle, remaining + 60);
+    }
+
+    function markActivity() {
+      if (document.hidden || !document.hasFocus()) return;
+      const now = performance.now();
+      lastActivityAt = now;
+      if (!sessionRunning) {
+        // Activity after an idle timeout starts a genuinely new session.
+        sessionElapsedMs = 0;
+        activeStartedAt = now;
+        sessionRunning = true;
+        updateSessionStats();
+      }
+      scheduleIdleCheck();
+    }
+
+    function endSessionOnUnfocus() {
+      rollDayIfNeeded();
+      clearIdleTimer();
+      stopRunningSession(performance.now());
+    }
+
     function startNewSessionOnFocus() {
       rollDayIfNeeded();
       if (document.hidden || !document.hasFocus() || sessionRunning) return;
+      const now = performance.now();
       sessionElapsedMs = 0;
-      activeStartedAt = performance.now();
+      activeStartedAt = now;
+      lastActivityAt = now;
       sessionRunning = true;
       updateSessionStats();
+      scheduleIdleCheck();
     }
 
     setInterval(updateSessionStats, 250);
+    if (sessionRunning) scheduleIdleCheck();
 
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) endSessionOnUnfocus();
@@ -950,8 +1004,18 @@
     window.addEventListener('blur', endSessionOnUnfocus);
     window.addEventListener('focus', startNewSessionOnFocus);
 
+    // Any real interaction keeps the reading session alive.
+    feed.addEventListener('scroll', markActivity, { passive: true });
+    feed.addEventListener('wheel', markActivity, { passive: true });
+    document.addEventListener('pointerdown', markActivity, { passive: true });
+    document.addEventListener('pointermove', markActivity, { passive: true });
+    document.addEventListener('touchstart', markActivity, { passive: true });
+    document.addEventListener('touchmove', markActivity, { passive: true });
+    document.addEventListener('keydown', markActivity);
+
     window.addEventListener('beforeunload', () => {
-      if (sessionRunning) endSessionOnUnfocus();
+      clearIdleTimer();
+      if (sessionRunning) stopRunningSession(performance.now());
       else persistDay(dayElapsedMs);
     });
 
