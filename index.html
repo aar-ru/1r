@@ -433,7 +433,7 @@
     let dayElapsedMs = Number(localStorage.getItem(DAILY_TIME_PREFIX + dayKey) || 0);
     let sessionElapsedMs = 0;
     let activeStartedAt = performance.now();
-    let sessionRunning = !document.hidden;
+    let sessionRunning = !document.hidden && document.hasFocus();
     let viewedCount = 0;
     const viewedCards = new WeakSet();
     let lastDailyPersist = 0;
@@ -492,26 +492,40 @@
       }
     }
 
-    setInterval(updateSessionStats, 250);
-    document.addEventListener('visibilitychange', () => {
+    function endSessionOnUnfocus() {
       rollDayIfNeeded();
+      if (!sessionRunning) return;
       const now = performance.now();
-      if (document.hidden && sessionRunning) {
-        const delta = now - activeStartedAt;
-        sessionElapsedMs += delta;
-        dayElapsedMs += delta;
-        sessionRunning = false;
-        persistDay(dayElapsedMs);
-      } else if (!document.hidden && !sessionRunning) {
-        activeStartedAt = now;
-        sessionRunning = true;
-      }
+      const delta = now - activeStartedAt;
+      sessionElapsedMs += delta;
+      dayElapsedMs += delta;
+      sessionRunning = false;
+      persistDay(dayElapsedMs);
       updateSessionStats();
+    }
+
+    function startNewSessionOnFocus() {
+      rollDayIfNeeded();
+      if (document.hidden || !document.hasFocus() || sessionRunning) return;
+      sessionElapsedMs = 0;
+      activeStartedAt = performance.now();
+      sessionRunning = true;
+      updateSessionStats();
+    }
+
+    setInterval(updateSessionStats, 250);
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) endSessionOnUnfocus();
+      else startNewSessionOnFocus();
     });
 
+    window.addEventListener('blur', endSessionOnUnfocus);
+    window.addEventListener('focus', startNewSessionOnFocus);
+
     window.addEventListener('beforeunload', () => {
-      rollDayIfNeeded();
-      persistDay(currentDayElapsedMs());
+      if (sessionRunning) endSessionOnUnfocus();
+      else persistDay(dayElapsedMs);
     });
 
     function shuffle(arr) {
