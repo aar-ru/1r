@@ -1,0 +1,44 @@
+name: Unpack index.html
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/unpack-index.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack embedded app
+        run: |
+          python - <<'PY'
+          import base64, gzip, re
+          from pathlib import Path
+
+          p = Path('index.html')
+          src = p.read_text(encoding='utf-8')
+          m = re.search(r'const b=atob\("([A-Za-z0-9+/=]+)"\)', src)
+          if not m:
+              print('index.html is already plain HTML')
+              raise SystemExit(0)
+
+          html = gzip.decompress(base64.b64decode(m.group(1))).decode('utf-8')
+          p.write_text(html, encoding='utf-8')
+          print(f'Unpacked {len(html)} bytes')
+          PY
+      - name: Commit plain HTML
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html
+          if git diff --cached --quiet; then
+            echo 'Nothing to commit'
+          else
+            git commit -m 'Unpack index.html for static hosting'
+            git push
+          fi
