@@ -218,7 +218,14 @@
           : item;
       });
       const custom = customItems().map(x => ({...x, source:'custom'}));
-      return [...editedBase.filter(x => !deleted.has(x.id)), ...custom.filter(x => !deleted.has(x.id))];
+      const combined = [...editedBase.filter(x => !deleted.has(x.id)), ...custom.filter(x => !deleted.has(x.id))];
+      const seen = new Set();
+      return combined.filter(item => {
+        const key = String(item.text || '').trim().toLocaleLowerCase('ru-RU').replace(/\s+/g, ' ').replace(/[.!?…]+$/g, '');
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
     }
 
     function removeFromSaved(id) {
