@@ -904,9 +904,19 @@
     const DELETED_AFFIRMATIONS_KEY = 'affirm_deleted_v1';
     const EDITED_AFFIRMATIONS_KEY = 'affirm_edits_v1';
 
+    function safeStorageGet(key) {
+      try { return localStorage.getItem(key); } catch { return null; }
+    }
+
+    function safeStorageSet(key, value) {
+      try { localStorage.setItem(key, value); return true; } catch { return false; }
+    }
+
     function readStoredJson(key, fallback) {
       try {
-        const value = JSON.parse(localStorage.getItem(key));
+        const raw = safeStorageGet(key);
+        if (raw == null) return fallback;
+        const value = JSON.parse(raw);
         return value ?? fallback;
       } catch {
         return fallback;
@@ -965,10 +975,11 @@
     const savedList = document.getElementById('savedList');
     const toast = document.getElementById('toast');
     const SAVED_KEY = 'affirm_strong500_saved_v2';
-    let saved = new Set(JSON.parse(localStorage.getItem(SAVED_KEY) || '[]'));
+    const savedStored = readStoredJson(SAVED_KEY, []);
+    let saved = new Set(Array.isArray(savedStored) ? savedStored : []);
     const activeAffirmationIds = new Set(AFFIRMATIONS.map(item => item.id));
     saved = new Set([...saved].filter(id => activeAffirmationIds.has(id)));
-    localStorage.setItem(SAVED_KEY, JSON.stringify([...saved]));
+    safeStorageSet(SAVED_KEY, JSON.stringify([...saved]));
     let deck = [];
     let cursor = 0;
     let initialHintVisible = true;
@@ -987,7 +998,7 @@
     }
 
     let dayKey = localDateKey();
-    let dayElapsedMs = Number(localStorage.getItem(DAILY_TIME_PREFIX + dayKey) || 0);
+    let dayElapsedMs = Number(safeStorageGet(DAILY_TIME_PREFIX + dayKey) || 0);
     let sessionElapsedMs = 0;
     let activeStartedAt = performance.now();
     let sessionRunning = !document.hidden && document.hasFocus();
@@ -1019,7 +1030,7 @@
     }
 
     function persistDay(value = dayElapsedMs) {
-      localStorage.setItem(DAILY_TIME_PREFIX + dayKey, String(Math.round(value)));
+      safeStorageSet(DAILY_TIME_PREFIX + dayKey, String(Math.round(value)));
     }
 
     function rollDayIfNeeded() {
@@ -1034,7 +1045,7 @@
       }
       persistDay(dayElapsedMs);
       dayKey = nextKey;
-      dayElapsedMs = Number(localStorage.getItem(DAILY_TIME_PREFIX + dayKey) || 0);
+      dayElapsedMs = Number(safeStorageGet(DAILY_TIME_PREFIX + dayKey) || 0);
     }
 
     function updateSessionStats() {
@@ -1176,7 +1187,7 @@
       const signature = fairSignature();
       const byId = new Map(AFFIRMATIONS.map(item => [item.id, item]));
       let state = null;
-      try { state = JSON.parse(localStorage.getItem(FAIR_QUEUE_KEY) || 'null'); } catch {}
+      try { state = JSON.parse(safeStorageGet(FAIR_QUEUE_KEY) || 'null'); } catch {}
       fairLastId = state && typeof state.lastId === 'string' ? state.lastId : null;
       if (state && state.signature === signature && Array.isArray(state.remaining)) {
         const restored = state.remaining.map(id => byId.get(id)).filter(Boolean);
@@ -1193,7 +1204,7 @@
 
     function persistFairDeck() {
       try {
-        localStorage.setItem(FAIR_QUEUE_KEY, JSON.stringify({
+        safeStorageSet(FAIR_QUEUE_KEY, JSON.stringify({
           signature: fairSignature(),
           remaining: deck.slice(cursor).map(item => item.id),
           lastId: fairLastId
@@ -1274,7 +1285,7 @@
         button.textContent = '♥';
         showToast('Сохранено');
       }
-      localStorage.setItem(SAVED_KEY, JSON.stringify([...saved]));
+      safeStorageSet(SAVED_KEY, JSON.stringify([...saved]));
       updateBadges();
       renderSaved();
     }
