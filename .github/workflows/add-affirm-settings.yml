@@ -1,0 +1,24 @@
+name: Add Affirm settings
+
+on:
+  push:
+    paths:
+      - '.github/workflows/add-affirm-settings.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch app for settings
+        run: python .github/add_affirm_settings.py
+      - name: Commit settings integration
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html
+          git commit -m 'Add affirmation settings page integration'
+          git push
