@@ -987,6 +987,7 @@
     // Session + daily active reading time. Daily total persists across reloads.
     // A session also ends after 30 seconds without interaction, even if the tab stays focused.
     const DAILY_TIME_PREFIX = 'affirm_daily_time_v1:';
+    const DAILY_CARDS_PREFIX = 'affirm_daily_cards_v1:';
     const IDLE_TIMEOUT_MS = 30_000;
 
     function localDateKey() {
@@ -1004,8 +1005,10 @@
     let sessionRunning = !document.hidden && document.hasFocus();
     let lastActivityAt = activeStartedAt;
     let idleTimer = null;
-    let viewedCount = 0;
-    const viewedCards = new WeakSet();
+    let viewedCount = Number(safeStorageGet(DAILY_CARDS_PREFIX + dayKey) || 0);
+    if (!Number.isFinite(viewedCount) || viewedCount < 0) viewedCount = 0;
+    viewedCount = Math.floor(viewedCount);
+    let viewedCards = new WeakSet();
     let lastDailyPersist = 0;
 
     function formatTime(ms) {
@@ -1033,6 +1036,10 @@
       safeStorageSet(DAILY_TIME_PREFIX + dayKey, String(Math.round(value)));
     }
 
+    function persistViewedCount() {
+      safeStorageSet(DAILY_CARDS_PREFIX + dayKey, String(viewedCount));
+    }
+
     function rollDayIfNeeded() {
       const nextKey = localDateKey();
       if (nextKey === dayKey) return;
@@ -1044,8 +1051,13 @@
         activeStartedAt = now;
       }
       persistDay(dayElapsedMs);
+      persistViewedCount();
       dayKey = nextKey;
       dayElapsedMs = Number(safeStorageGet(DAILY_TIME_PREFIX + dayKey) || 0);
+      viewedCount = Number(safeStorageGet(DAILY_CARDS_PREFIX + dayKey) || 0);
+      if (!Number.isFinite(viewedCount) || viewedCount < 0) viewedCount = 0;
+      viewedCount = Math.floor(viewedCount);
+      viewedCards = new WeakSet();
     }
 
     function updateSessionStats() {
@@ -1347,6 +1359,7 @@
             if (!viewedCards.has(entry.target)) {
               viewedCards.add(entry.target);
               viewedCount += 1;
+              persistViewedCount();
               updateSessionStats();
             }
             const idx = [...feed.children].indexOf(entry.target);
