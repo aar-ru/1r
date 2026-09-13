@@ -1217,8 +1217,9 @@
       if (cursor >= deck.length) startFreshFairDeck();
       const item = deck[cursor++];
       fairLastId = item.id;
+      const cycleRemaining = Math.max(0, deck.length - cursor);
       persistFairDeck();
-      return item;
+      return { ...item, cycleRemaining };
     }
 
     function imageFor(item, salt = 0) {
@@ -1240,6 +1241,7 @@
           <div class="session-stats" aria-label="Время сегодня и текущая сессия">
             <span class="stat-line">сессия <span class="session-timer">00:00</span></span>
             <span class="stat-line">сегодня <span class="day-timer">00:00</span> · <span class="view-count">0</span> карт.</span>
+            <span class="stat-line">до нового круга <span class="cycle-remaining">${item.cycleRemaining}</span></span>
           </div>
           <div class="top-actions">
             <a class="icon-btn settings-link" href="settings.html" aria-label="Настройки">⚙</a>
