@@ -19,6 +19,8 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add settings.html .github/add_affirm_editing.py
+          git add settings.html
           git commit -m 'Fix settings parser for trailing commas'
           git push
+
+# retry parser fix
