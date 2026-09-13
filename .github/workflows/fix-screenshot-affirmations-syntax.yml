@@ -1,0 +1,24 @@
+name: Fix screenshot affirmation syntax
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-screenshot-affirmations-syntax.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fix syntax
+        run: python .github/fix_screenshot_affirmations_syntax.py
+      - name: Commit fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html .github/add_screenshot_affirmations.py
+          git commit -m 'Fix screenshot affirmation array syntax'
+          git push
