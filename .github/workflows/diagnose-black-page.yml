@@ -1,0 +1,26 @@
+name: Diagnose black page
+
+on:
+  push:
+    paths:
+      - '.github/workflows/diagnose-black-page.yml'
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract inline app script
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          s = Path('index.html').read_text(encoding='utf-8')
+          scripts = re.findall(r'<script>(.*?)</script>', s, flags=re.S)
+          print('scripts', len(scripts))
+          Path('/tmp/app.js').write_text('\n'.join(scripts), encoding='utf-8')
+          PY
+      - name: Check JavaScript syntax
+        run: node --check /tmp/app.js
+      - name: Show fair-shuffle lines
+        run: grep -n -E 'FAIR_QUEUE|uniqueAffirmations|nextItem|appendCards' /tmp/app.js
