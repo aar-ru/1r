@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0b0b" />
+  <title>Настройки — Affirm</title>
+  <style>
+    :root {
+      --bg:#0b0b0b;
+      --panel:#151515;
+      --panel-2:#1d1d1d;
+      --text:#fff;
+      --muted:rgba(255,255,255,.62);
+      --line:rgba(255,255,255,.10);
+      --accent:#fff;
+      --danger:#ff6969;
+    }
+    * { box-sizing:border-box; }
+    html,body { margin:0; min-height:100%; background:var(--bg); color:var(--text); font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; -webkit-tap-highlight-color:transparent; }
+    body { min-height:100dvh; }
+    button,input,textarea,select { font:inherit; }
+    button,a { -webkit-tap-highlight-color:transparent; }
+    .shell { width:min(720px,100%); margin:0 auto; padding: max(16px,env(safe-area-inset-top)) 16px max(32px,calc(env(safe-area-inset-bottom) + 18px)); }
+    .top { position:sticky; top:0; z-index:10; display:flex; align-items:center; gap:12px; padding:8px 0 16px; background:linear-gradient(180deg,#0b0b0b 72%,rgba(11,11,11,0)); }
+    .back { width:44px; height:44px; border-radius:50%; border:1px solid var(--line); background:#171717; color:#fff; display:grid; place-items:center; text-decoration:none; font-size:21px; }
+    .title-wrap { flex:1; min-width:0; }
+    h1 { margin:0; font-size:25px; line-height:1.05; letter-spacing:-.03em; }
+    .subtitle { margin-top:4px; color:var(--muted); font-size:13px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:24px; padding:18px; margin-bottom:14px; }
+    .card h2 { margin:0 0 14px; font-size:18px; letter-spacing:-.02em; }
+    .field { display:grid; gap:7px; margin-bottom:12px; }
+    label { color:var(--muted); font-size:12px; font-weight:700; letter-spacing:.03em; }
+    textarea,input,select { width:100%; border:1px solid var(--line); border-radius:16px; background:var(--panel-2); color:#fff; outline:none; padding:13px 14px; }
+    textarea { min-height:105px; resize:vertical; line-height:1.35; }
+    textarea:focus,input:focus,select:focus { border-color:rgba(255,255,255,.34); }
+    select { appearance:none; }
+    .primary { width:100%; border:0; border-radius:16px; padding:14px 16px; background:#fff; color:#111; font-weight:800; cursor:pointer; }
+    .primary:disabled { opacity:.45; cursor:default; }
+    .stats { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; }
+    .pill { padding:8px 11px; border-radius:999px; background:#181818; border:1px solid var(--line); color:var(--muted); font-size:12px; }
+    .pill strong { color:#fff; }
+    .toolbar { display:grid; grid-template-columns:1fr; gap:9px; margin-bottom:12px; }
+    @media(min-width:560px){ .toolbar { grid-template-columns:1fr 220px; } }
+    .row-list { display:grid; gap:9px; }
+    .item { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:center; background:#141414; border:1px solid var(--line); border-radius:18px; padding:14px; }
+    .item-text { font-size:15px; line-height:1.35; overflow-wrap:anywhere; }
+    .meta { display:flex; gap:7px; align-items:center; margin-top:8px; color:var(--muted); font-size:11px; }
+    .tag { padding:4px 7px; border-radius:999px; border:1px solid var(--line); }
+    .custom-tag { color:#fff; }
+    .delete { width:42px; height:42px; border-radius:50%; border:1px solid rgba(255,105,105,.25); background:rgba(255,105,105,.08); color:#ff9292; cursor:pointer; display:grid; place-items:center; font-size:18px; }
+    .secondary { border:1px solid var(--line); border-radius:14px; padding:11px 13px; background:#171717; color:#fff; font-weight:700; cursor:pointer; }
+    .secondary.danger { color:#ff9c9c; }
+    .actions { display:flex; gap:9px; flex-wrap:wrap; }
+    .empty { padding:26px 10px; text-align:center; color:var(--muted); line-height:1.45; }
+    .notice { display:none; margin-top:10px; padding:11px 12px; border-radius:14px; background:#202020; color:#ddd; font-size:13px; }
+    .notice.show { display:block; }
+    .loading { padding:36px 0; text-align:center; color:var(--muted); }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="top">
+      <a class="back" href="index.html" aria-label="Назад в Affirm">‹</a>
+      <div class="title-wrap">
+        <h1>Настройки</h1>
+        <div class="subtitle">Управление аффирмациями на этом устройстве</div>
+      </div>
+    </header>
+
+    <section class="card">
+      <h2>Добавить аффирмацию</h2>
+      <div class="field">
+        <label for="newText">Текст</label>
+        <textarea id="newText" maxlength="500" placeholder="Напиши свою аффирмацию"></textarea>
+      </div>
+      <div class="field">
+        <label for="newTheme">Раздел</label>
+        <select id="newTheme"></select>
+      </div>
+      <button class="primary" id="addBtn">Добавить в ленту</button>
+      <div class="notice" id="notice"></div>
+    </section>
+
+    <section class="card">
+      <h2>Мои аффирмации</h2>
+      <div class="stats">
+        <div class="pill">В ленте: <strong id="activeCount">—</strong></div>
+        <div class="pill">Добавлено: <strong id="customCount">—</strong></div>
+        <div class="pill">Удалено: <strong id="deletedCount">—</strong></div>
+      </div>
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="Поиск по тексту" />
+        <select id="filterTheme"><option value="all">Все разделы</option></select>
+      </div>
+      <div class="actions" style="margin-bottom:12px">
+        <button class="secondary" id="restoreBtn">Вернуть удалённые</button>
+      </div>
+      <div id="list" class="row-list"><div class="loading">Загружаю аффирмации…</div></div>
+    </section>
+  </main>
+
+  <script>
+    const CUSTOM_KEY = 'affirm_custom_v1';
+    const DELETED_KEY = 'affirm_deleted_v1';
+    const SAVED_KEY = 'affirm_strong500_saved_v2';
+
+    const THEME_LABELS = {
+      self:'Я-концепция', decisions:'Решения и уверенность', luck:'Удача и реальность',
+      calm:'Спокойствие', focus:'Фокус и действие', money:'Деньги и доход',
+      lifestyle:'Богатство и образ жизни', ideas:'Идеи и продукты',
+      ownership:'Ownership и партнёрство', team:'Команда', yana:'Яна и взаимность',
+      love:'Любовь и отношения', family:'Семья и дом', attraction:'Привлекательность и близость',
+      health:'Тело, здоровье и энергия', learning:'Обучение и новые навыки',
+      newlife:'Новая жизнь и смысл', fulfilled:'Уже сбылось'
+    };
+
+    const newText = document.getElementById('newText');
+    const newTheme = document.getElementById('newTheme');
+    const filterTheme = document.getElementById('filterTheme');
+    const list = document.getElementById('list');
+    const search = document.getElementById('search');
+    const notice = document.getElementById('notice');
+    let base = [];
+
+    function loadJson(key, fallback) {
+      try {
+        const value = JSON.parse(localStorage.getItem(key));
+        return value ?? fallback;
+      } catch { return fallback; }
+    }
+
+    function customItems() {
+      const items = loadJson(CUSTOM_KEY, []);
+      return Array.isArray(items) ? items.filter(x => x && x.id && x.text && THEME_LABELS[x.theme]) : [];
+    }
+
+    function deletedIds() {
+      const ids = loadJson(DELETED_KEY, []);
+      return new Set(Array.isArray(ids) ? ids : []);
+    }
+
+    function saveCustom(items) { localStorage.setItem(CUSTOM_KEY, JSON.stringify(items)); }
+    function saveDeleted(set) { localStorage.setItem(DELETED_KEY, JSON.stringify([...set])); }
+
+    function showNotice(text) {
+      notice.textContent = text;
+      notice.classList.add('show');
+      clearTimeout(showNotice.timer);
+      showNotice.timer = setTimeout(() => notice.classList.remove('show'), 1800);
+    }
+
+    function parseBaseAffirmations(html) {
+      const startMarker = 'const BASE_AFFIRMATIONS = [';
+      const start = html.indexOf(startMarker);
+      if (start < 0) throw new Error('BASE_AFFIRMATIONS not found');
+      const after = html.slice(start + 'const BASE_AFFIRMATIONS = '.length);
+      const end = after.indexOf('].map((x, i) =>');
+      if (end < 0) throw new Error('AFFIRMATIONS end not found');
+      const rawArray = after.slice(0, end + 1);
+      const rows = JSON.parse(rawArray);
+      return rows.map((x, i) => ({ id:`u${i+1}`, theme:x[0], text:x[1], source:'base' }));
+    }
+
+    function allActive() {
+      const deleted = deletedIds();
+      const custom = customItems().map(x => ({...x, source:'custom'}));
+      return [...base.filter(x => !deleted.has(x.id)), ...custom.filter(x => !deleted.has(x.id))];
+    }
+
+    function removeFromSaved(id) {
+      const saved = loadJson(SAVED_KEY, []);
+      if (!Array.isArray(saved)) return;
+      localStorage.setItem(SAVED_KEY, JSON.stringify(saved.filter(x => x !== id)));
+    }
+
+    function render() {
+      const custom = customItems();
+      const deleted = deletedIds();
+      const active = allActive();
+      document.getElementById('activeCount').textContent = active.length;
+      document.getElementById('customCount').textContent = custom.length;
+      document.getElementById('deletedCount').textContent = [...deleted].filter(id => base.some(x => x.id === id)).length;
+      document.getElementById('restoreBtn').disabled = deleted.size === 0;
+
+      const q = search.value.trim().toLowerCase();
+      const theme = filterTheme.value;
+      const filtered = active.filter(item => {
+        const matchesText = !q || item.text.toLowerCase().includes(q);
+        const matchesTheme = theme === 'all' || item.theme === theme;
+        return matchesText && matchesTheme;
+      });
+
+      list.innerHTML = '';
+      if (!filtered.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'Ничего не найдено.';
+        list.appendChild(empty);
+        return;
+      }
+
+      filtered.forEach(item => {
+        const row = document.createElement('div');
+        row.className = 'item';
+        const main = document.createElement('div');
+        const text = document.createElement('div');
+        text.className = 'item-text';
+        text.textContent = item.text;
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        const tag = document.createElement('span');
+        tag.className = 'tag';
+        tag.textContent = THEME_LABELS[item.theme] || item.theme;
+        meta.appendChild(tag);
+        if (item.source === 'custom') {
+          const customTag = document.createElement('span');
+          customTag.className = 'tag custom-tag';
+          customTag.textContent = 'добавлено мной';
+          meta.appendChild(customTag);
+        }
+        main.append(text, meta);
+
+        const del = document.createElement('button');
+        del.className = 'delete';
+        del.type = 'button';
+        del.setAttribute('aria-label', 'Удалить аффирмацию');
+        del.textContent = '×';
+        del.addEventListener('click', () => deleteItem(item));
+        row.append(main, del);
+        list.appendChild(row);
+      });
+    }
+
+    function deleteItem(item) {
+      if (item.source === 'custom') {
+        saveCustom(customItems().filter(x => x.id !== item.id));
+      } else {
+        const deleted = deletedIds();
+        deleted.add(item.id);
+        saveDeleted(deleted);
+      }
+      removeFromSaved(item.id);
+      render();
+    }
+
+    document.getElementById('addBtn').addEventListener('click', () => {
+      const text = newText.value.trim();
+      const theme = newTheme.value;
+      if (!text) { showNotice('Сначала напиши текст аффирмации.'); return; }
+      const items = customItems();
+      const id = `c${Date.now()}${Math.floor(Math.random()*10000)}`;
+      items.push({ id, theme, text });
+      saveCustom(items);
+      newText.value = '';
+      showNotice('Добавлено в ленту.');
+      render();
+    });
+
+    document.getElementById('restoreBtn').addEventListener('click', () => {
+      localStorage.removeItem(DELETED_KEY);
+      showNotice('Все стандартные аффирмации восстановлены.');
+      render();
+    });
+
+    search.addEventListener('input', render);
+    filterTheme.addEventListener('change', render);
+
+    async function init() {
+      Object.entries(THEME_LABELS).forEach(([value,label]) => {
+        const a = document.createElement('option'); a.value = value; a.textContent = label; newTheme.appendChild(a);
+        const b = document.createElement('option'); b.value = value; b.textContent = label; filterTheme.appendChild(b);
+      });
+      try {
+        const response = await fetch(`index.html?settings=${Date.now()}`, { cache:'no-store' });
+        const html = await response.text();
+        base = parseBaseAffirmations(html);
+        render();
+      } catch (err) {
+        list.innerHTML = '<div class="empty">Не удалось загрузить стандартные аффирмации. Обнови страницу.</div>';
+        console.error(err);
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
