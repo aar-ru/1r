@@ -868,6 +868,7 @@
 
     const CUSTOM_AFFIRMATIONS_KEY = 'affirm_custom_v1';
     const DELETED_AFFIRMATIONS_KEY = 'affirm_deleted_v1';
+    const EDITED_AFFIRMATIONS_KEY = 'affirm_edits_v1';
 
     function readStoredJson(key, fallback) {
       try {
@@ -892,8 +893,19 @@
       ).map(item => ({ id:item.id, theme:item.theme, text:item.text.trim() }));
     })();
 
+    const editedAffirmations = (() => {
+      const value = readStoredJson(EDITED_AFFIRMATIONS_KEY, {});
+      return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    })();
+
+    const editedBaseAffirmations = BASE_AFFIRMATIONS.map(item => {
+      const edit = editedAffirmations[item.id];
+      if (!edit || typeof edit.text !== 'string' || !edit.text.trim() || !THEMES[edit.theme]) return item;
+      return { ...item, text:edit.text.trim(), theme:edit.theme };
+    });
+
     const effectiveAffirmations = [
-      ...BASE_AFFIRMATIONS.filter(item => !deletedAffirmationIds.has(item.id)),
+      ...editedBaseAffirmations.filter(item => !deletedAffirmationIds.has(item.id)),
       ...customAffirmations.filter(item => !deletedAffirmationIds.has(item.id))
     ];
     const AFFIRMATIONS = effectiveAffirmations.length ? effectiveAffirmations : BASE_AFFIRMATIONS.slice(0, 1);
