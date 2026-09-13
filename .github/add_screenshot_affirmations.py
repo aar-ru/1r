@@ -95,8 +95,13 @@ for category, text in ADDITIONS:
     added_live += 1
 
 if rows:
+    # Ensure the existing last array row is comma-terminated before appending.
+    prefix = src[:end]
+    stripped = prefix.rstrip()
+    if stripped.endswith(']') and not stripped.endswith('],'):
+        prefix = stripped + ',' + prefix[len(stripped):]
     insertion = '\n'.join(rows) + '\n'
-    src = src[:end] + insertion + src[end:]
+    src = prefix + insertion + src[end:]
     index_path.write_text(src, encoding='utf-8')
 
 print(f'Added {added_live} screenshot affirmations to live app; {added_to_source} to source corpus')
