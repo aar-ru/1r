@@ -22,5 +22,39 @@ jobs:
           PY
       - name: Check JavaScript syntax
         run: node --check /tmp/app.js
+      - name: Install jsdom
+        run: npm install jsdom@26
+      - name: Runtime smoke test
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const { JSDOM, VirtualConsole } = require('jsdom');
+          const html = fs.readFileSync('index.html', 'utf8');
+          const vc = new VirtualConsole();
+          let hadError = false;
+          vc.on('jsdomError', e => { hadError = true; console.error('JSDOM ERROR:', e.stack || e.message); });
+          vc.on('error', (...a) => { hadError = true; console.error('CONSOLE ERROR:', ...a); });
+          const dom = new JSDOM(html, {
+            runScripts: 'dangerously',
+            resources: 'usable',
+            pretendToBeVisual: true,
+            url: 'https://aar-ru.github.io/1r/',
+            virtualConsole: vc,
+            beforeParse(window) {
+              class IO {
+                constructor(cb) { this.cb = cb; }
+                observe() {}
+                disconnect() {}
+              }
+              window.IntersectionObserver = IO;
+            }
+          });
+          setTimeout(() => {
+            const cards = dom.window.document.querySelectorAll('.card').length;
+            console.log('cards:', cards);
+            if (hadError || cards === 0) process.exit(1);
+            process.exit(0);
+          }, 1200);
+          NODE
       - name: Show fair-shuffle lines
         run: grep -n -E 'FAIR_QUEUE|uniqueAffirmations|nextItem|appendCards' /tmp/app.js
