@@ -65,53 +65,41 @@
     }
 
     .topbar {
-      position: absolute;
+      position: fixed;
       top: max(14px, calc(env(safe-area-inset-top) + 8px));
       left: 16px;
       right: 16px;
       display: grid;
-      grid-template-columns: 1fr auto 1fr;
+      grid-template-columns: 1fr auto;
       align-items: center;
       gap: 10px;
       z-index: 3;
     }
-    .brand {
-      justify-self: start;
-      font-weight: 750;
-      letter-spacing: .02em;
-      font-size: 15px;
-      text-shadow: 0 2px 20px rgba(0,0,0,.35);
-    }
-    .session-stats {
-      justify-self: center;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 1px;
-      min-height: 40px;
-      padding: 5px 10px;
+    .brand { font-weight:750; letter-spacing:.02em; font-size:18px; text-shadow:0 2px 20px rgba(0,0,0,.5); }
+    .top-actions { display:flex; align-items:center; gap:8px; }
+    .settings-link { text-decoration:none; font-size:18px; }
+    .progress-summary {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px 12px;
+      width: 100%;
+      min-height: 48px;
       border: 1px solid var(--glass-border);
-      border-radius: 999px;
-      background: var(--glass);
+      border-radius: 18px;
+      padding: 10px 14px;
+      background: rgba(10,10,10,.45);
+      color: white;
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      box-shadow: 0 10px 30px rgba(0,0,0,.12);
-      color: rgba(255,255,255,.94);
-      font-size: 10px;
-      line-height: 1.2;
-      font-weight: 750;
-      letter-spacing: .01em;
-      white-space: nowrap;
+      font-size: 12px;
       font-variant-numeric: tabular-nums;
+      text-align: left;
+      cursor: pointer;
     }
-    .session-stats .stat-line { display: block; }
-    .session-stats .session-timer,
-    .session-stats .day-timer { font-size: 12px; font-weight: 800; }
-    .top-actions { justify-self:end; display:flex; align-items:center; gap:8px; }
-    .open-saved { justify-self: end; }
-    .settings-link { text-decoration:none; font-size:18px; }
-    .brand small { opacity: .62; font-weight: 600; margin-left: 7px; }
+    .progress-summary > :nth-child(2) { text-align:right; }
+    .progress-summary .goal-track { grid-column:1 / -1; width:100%; margin:0; height:3px; }
+    :focus-visible { outline:2px solid white; outline-offset:4px; }
 
     .icon-btn {
       appearance: none;
@@ -133,17 +121,21 @@
       position: absolute;
       left: 22px;
       right: 22px;
-      bottom: max(132px, calc(env(safe-area-inset-bottom) + 112px));
+      top: max(140px, calc(env(safe-area-inset-top) + 134px));
+      bottom: max(148px, calc(env(safe-area-inset-bottom) + 128px));
       max-width: 560px;
       margin: auto;
       text-align: center;
       display: flex;
       flex-direction: column;
       align-items: center;
+      justify-content: flex-end;
+      min-height: 0;
       gap: 14px;
     }
 
     .topic {
+      flex-shrink: 0;
       font-size: 12px;
       font-weight: 800;
       letter-spacing: .17em;
@@ -159,6 +151,12 @@
 
     .text {
       margin: 0;
+      min-height: 0;
+      max-width: 100%;
+      overflow-y: auto;
+      overflow-wrap: anywhere;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
       font-size: clamp(30px, 8.7vw, 43px);
       line-height: 1.08;
       letter-spacing: -0.032em;
@@ -191,8 +189,6 @@
     }
     .favorite.saved { background: rgba(255,255,255,.92); color: #111; }
 
-    .game-line { color: rgba(255,255,255,.98); font-weight: 850; }
-    .goal-line { color: rgba(255,255,255,.82); }
     .goal-track {
       display:block;
       width:118px;
@@ -295,6 +291,17 @@
     .drawer-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px; }
     .drawer h2 { margin:0; font-size: 25px; letter-spacing:-.025em; }
     .saved-list { display:grid; gap:12px; }
+    .progress-intro { color:var(--muted); line-height:1.5; font-size:14px; }
+    .progress-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:20px 0 26px; }
+    .progress-grid > div { padding:16px 12px; border:1px solid var(--glass-border); border-radius:18px; background:#1a1a1a; }
+    .progress-grid dt { color:var(--muted); font-size:12px; line-height:1.4; }
+    .progress-grid dd { margin:8px 0 0; font-size:24px; font-weight:750; font-variant-numeric:tabular-nums; }
+    .progress-grid small { font-size:12px; font-weight:400; }
+    .progress-section { font-size:18px; margin:24px 0 12px; }
+    .achievements { list-style:none; margin:0; padding:0; }
+    .achievements li { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:15px 0; border-bottom:1px solid #282828; font-size:14px; }
+    .achievements li > :last-child { color:var(--muted); font-size:12px; white-space:nowrap; }
+    .achievements .earned > :last-child { color:#b9e8c9; }
     .saved-card {
       min-height: 145px;
       border-radius: 22px;
@@ -311,12 +318,11 @@
     .saved-card::before { content:""; position:absolute; inset:0; background:linear-gradient(180deg,rgba(0,0,0,.15),rgba(0,0,0,.76)); }
     .saved-card > * { position:relative; z-index:1; }
     .saved-card .mini-topic { font-size:10px; opacity:.7; text-transform:uppercase; letter-spacing:.12em; margin-bottom:8px; }
-    .saved-card p { margin:0; font-size:18px; line-height:1.2; font-weight:700; }
+    .saved-card p { overflow-wrap:anywhere; margin:0; font-size:18px; line-height:1.2; font-weight:700; }
     .empty { opacity:.62; padding: 40px 8px; text-align:center; line-height:1.5; }
     .count-badge { min-width:20px; height:20px; padding:0 6px; border-radius:999px; background:#fff; color:#111; display:inline-grid; place-items:center; font-size:11px; font-weight:800; position:absolute; transform:translate(12px,-12px); }
 
     @media (max-width: 700px) {
-      .brand small { display:none; }
       .topic { font-size: 11px; padding: 7px 10px; }
       .saved-card { min-height: 132px; border-radius: 20px; }
     }
@@ -326,6 +332,7 @@
       body { display:grid; place-items:center; background:#090909; }
       #feed { width:min(430px, 100vw); height:min(900px, 100dvh); border-radius:30px; overflow-y:auto; box-shadow:0 30px 90px rgba(0,0,0,.45); }
       .card { height:min(900px, 100dvh); }
+      .topbar { left:50%; right:auto; width:398px; transform:translateX(-50%); top:max(14px, calc((100dvh - 900px) / 2 + 14px)); }
       .drawer { left:50%; right:auto; width:min(430px, 100vw); transform:translate(-50%, 102%); }
       .drawer.open { transform:translate(-50%, 0); }
       .drawer-backdrop { background:rgba(0,0,0,.65); }
@@ -333,7 +340,9 @@
     }
 
     @media (orientation: landscape) and (max-height: 560px) {
-      .content { bottom: 76px; }
+      .topbar { top:8px; gap:6px; }
+      .progress-summary { min-height:42px; padding:8px 14px; gap:6px; }
+      .content { top:120px; bottom:86px; gap:8px; }
       .text { font-size: clamp(24px, 5vw, 34px); }
       .favorite { bottom: 18px; }
       .hint { display:none; }
@@ -346,11 +355,23 @@
     .storage-warning { position:fixed; bottom:8px; left:16px; right:16px; z-index:100; padding:12px; background:#6a3d13; color:#fff; border-radius:12px; font-size:13px; text-align:center; }
     .feed-empty { height:100%; display:grid; place-content:center; padding:28px; }
     .feed-empty a { color:#fff; }
-    .long-text .text { font-size:clamp(20px,5vw,27px); line-height:1.25; max-height:calc(100dvh - 310px); overflow-y:auto; overflow-wrap:anywhere; overscroll-behavior:contain; }
+    .long-text .text { font-size:clamp(20px,5vw,27px); line-height:1.25; }
   </style>
 </head>
 <body>
   <div id="storageWarning" class="storage-warning" role="status" hidden>Браузер не разрешил сохранять данные. Изменения действуют только до закрытия страницы; сделай резервную копию в настройках.</div>
+  <header class="topbar" id="topbar">
+    <div class="brand">Affirm</div>
+    <nav class="top-actions" aria-label="Разделы">
+      <a class="icon-btn settings-link" href="settings.html" aria-label="Настройки">⚙</a>
+      <button class="icon-btn open-saved" aria-label="Открыть сохранённые">♡<span class="count-badge" hidden></span></button>
+    </nav>
+    <button class="progress-summary" id="openProgress" aria-label="Мой прогресс" aria-haspopup="dialog">
+      <span>Сегодня <strong class="day-timer">00:00</strong></span>
+      <span class="goal-progress">0 / 0</span>
+      <span class="goal-track" aria-hidden="true"><span class="goal-fill"></span></span>
+    </button>
+  </header>
   <main id="feed" aria-label="Лента аффирмаций"></main>
 
   <div class="drawer-backdrop" id="backdrop"></div>
@@ -360,6 +381,31 @@
       <button class="icon-btn" id="closeDrawer" aria-label="Закрыть">✕</button>
     </div>
     <div id="savedList" class="saved-list"></div>
+  </aside>
+
+  <aside class="drawer" id="progressDrawer" role="dialog" aria-modal="true" aria-labelledby="progressTitle" hidden>
+    <div class="drawer-head">
+      <h2 id="progressTitle">Мой прогресс</h2>
+      <button class="icon-btn" id="closeProgress" aria-label="Закрыть прогресс">✕</button>
+    </div>
+    <p class="progress-intro">Цель дня — просмотреть все уникальные аффирмации. Серия растёт за каждый день с выполненной целью.</p>
+    <h3 class="progress-section">Сегодня</h3>
+    <dl class="progress-grid">
+      <div><dt>Время в приложении</dt><dd class="day-timer">00:00</dd></div>
+      <div><dt>Просмотров карточек</dt><dd class="view-count">0</dd></div>
+      <div><dt>Текущая сессия</dt><dd class="session-timer">00:00</dd></div>
+      <div><dt>До конца круга</dt><dd class="cycle-remaining">0</dd></div>
+    </dl>
+    <h3 class="progress-section">За всё время</h3>
+    <dl class="progress-grid">
+      <div><dt>Опыт</dt><dd><span class="xp-count">0</span> <small>XP</small></dd></div>
+      <div><dt>Уровень</dt><dd class="level-count">1</dd></div>
+      <div><dt>Текущая серия</dt><dd><span class="streak-count">0</span> <small>дн.</small></dd></div>
+      <div><dt>Полных кругов</dt><dd class="cycle-count">0</dd></div>
+      <div><dt>Всего карточек</dt><dd class="total-cards">0</dd></div>
+    </dl>
+    <h3 class="progress-section">Достижения</h3>
+    <ul class="achievements" id="achievements"></ul>
   </aside>
 
   <div id="toast" class="toast" role="status" aria-live="polite">Сохранено</div>

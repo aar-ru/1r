@@ -136,16 +136,19 @@
     }
     const level = Math.floor(game.totalXp / 250) + 1;
     if (level > oldLevel) rewards.push({ emoji: '⭐', title: `Уровень ${level}`, text: `У тебя уже ${game.totalXp} XP.` });
-    const milestones = [
+    for (const [key, achieved, emoji, title] of milestones(game)) if (achieved && !game.achievements.includes(key)) {
+      game.achievements.push(key); rewards.push({ emoji, title, text: 'Новое достижение!' });
+    }
+    return rewards;
+  }
+  function milestones(game) {
+    const level = Math.floor(game.totalXp / 250) + 1;
+    return [
       ['cards100', game.achievementCards>=100, '💯','100 карт'], ['cards500',game.achievementCards>=500,'🏅','500 карт'],
       ['cards1000',game.achievementCards>=1000,'🏆','1000 карт'], ['streak7',game.streak>=7,'🔥','7 дней подряд'],
       ['streak30',game.streak>=30,'🔥','30 дней подряд'], ['cycle1',game.cycles>=1,'🔄','Первый полный круг'],
       ['cycle10',game.cycles>=10,'👑','10 полных кругов'], ['level5',level>=5,'⭐','5 уровень'], ['level10',level>=10,'🌟','10 уровень']
     ];
-    for (const [key, achieved, emoji, title] of milestones) if (achieved && !game.achievements.includes(key)) {
-      game.achievements.push(key); rewards.push({ emoji, title, text: 'Новое достижение!' });
-    }
-    return rewards;
   }
   function addTime(state, start, end) {
     // Split a short active interval at local midnight; never charge it all to yesterday.
@@ -197,7 +200,7 @@
     }
     return state;
   }
-  const api = { empty, migrate, allItems, activeItems, validateText, textKey, dateKey, previousDay, getDay, ensureRound, preview, view, addTime, toggleSaved, restoreBackup, token };
+  const api = { empty, migrate, allItems, activeItems, validateText, textKey, dateKey, previousDay, getDay, ensureRound, preview, view, milestones, addTime, toggleSaved, restoreBackup, token };
   root.AffirmState = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
