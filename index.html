@@ -1054,6 +1054,7 @@
     const HAPTICS_KEY = 'affirm_haptics_v1';
     const DAILY_GOAL_PROGRESS_PREFIX = 'affirm_daily_round_progress_v2:';
     const DAILY_GOAL_MODE = 'viewed-full-round-v2';
+    const ACHIEVEMENT_MODE = 'fresh-card-milestones-v2';
     const DAILY_GOAL_CYCLES = 1;
     const XP_PER_CARD = 1;
     const XP_DAILY_GOAL = 20;
@@ -1095,6 +1096,8 @@
       return {
         totalXp: Math.max(0, Math.floor(Number(src.totalXp) || 0)),
         totalCards: Math.max(0, Math.floor(Number(src.totalCards) || 0)),
+        achievementCards: Math.max(0, Math.floor(Number(src.achievementCards) || 0)),
+        achievementMode: typeof src.achievementMode === 'string' ? src.achievementMode : '',
         streak: Math.max(0, Math.floor(Number(src.streak) || 0)),
         lastGoalDate: typeof src.lastGoalDate === 'string' ? src.lastGoalDate : '',
         lastCycleGoalDate: typeof src.lastCycleGoalDate === 'string' ? src.lastCycleGoalDate : '',
@@ -1130,6 +1133,16 @@
 
     function saveGameState() {
       safeStorageSet(GAME_STATE_KEY, JSON.stringify(gameState));
+    }
+
+    // Card milestones must count only cards genuinely viewed after this milestone system starts.
+    // Older daily-card totals were imported into totalCards when gamification was introduced,
+    // which could incorrectly pop the 100-card achievement immediately.
+    if (gameState.achievementMode !== ACHIEVEMENT_MODE) {
+      gameState.achievementMode = ACHIEVEMENT_MODE;
+      gameState.achievementCards = 0;
+      gameState.achievements = gameState.achievements.filter(id => !['cards100','cards500','cards1000'].includes(id));
+      saveGameState();
     }
 
     function hapticsEnabled() {
@@ -1224,9 +1237,9 @@
     }
 
     function checkAchievements() {
-      if (gameState.totalCards >= 100) unlockAchievement('cards100', '💯', '100 карт', 'Первая сотня прочитанных аффирмаций.');
-      if (gameState.totalCards >= 500) unlockAchievement('cards500', '🏅', '500 карт', 'Уже 500 прочитанных карт.');
-      if (gameState.totalCards >= 1000) unlockAchievement('cards1000', '🏆', '1000 карт', 'Ты прочитал 1000 карт.');
+      if (gameState.achievementCards >= 100) unlockAchievement('cards100', '💯', '100 карт', 'Первая сотня прочитанных аффирмаций.');
+      if (gameState.achievementCards >= 500) unlockAchievement('cards500', '🏅', '500 карт', 'Уже 500 прочитанных карт.');
+      if (gameState.achievementCards >= 1000) unlockAchievement('cards1000', '🏆', '1000 карт', 'Ты прочитал 1000 карт.');
       if (gameState.streak >= 7) unlockAchievement('streak7', '🔥', '7 дней подряд', 'Неделя с выполненной дневной целью.');
       if (gameState.streak >= 30) unlockAchievement('streak30', '🔥', '30 дней подряд', 'Месяц стабильной практики.');
       if (gameState.cycles >= 1) unlockAchievement('cycle1', '🔄', 'Первый полный круг', 'Ты прошёл всю активную колоду.');
@@ -1272,6 +1285,7 @@
         persistDailyGoalProgress();
       }
       gameState.totalCards += 1;
+      gameState.achievementCards += 1;
       const levelChange = addXp(XP_PER_CARD);
       completeDailyGoalIfNeeded(true);
       completeCycle(card);
