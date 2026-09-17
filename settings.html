@@ -76,9 +76,12 @@
     .switch-track::after { content:""; position:absolute; top:3px; left:3px; width:22px; height:22px; border-radius:50%; background:#fff; transition:.2s ease; }
     .switch input:checked + .switch-track { background:#fff; }
     .switch input:checked + .switch-track::after { transform:translateX(22px); background:#111; }
+    [hidden] { display:none !important; }
+    .storage-warning { position:fixed; bottom:8px; left:16px; right:16px; z-index:100; padding:12px; background:#6a3d13; color:#fff; border-radius:12px; font-size:13px; text-align:center; }
   </style>
 </head>
 <body>
+  <div id="storageWarning" class="storage-warning" role="status" hidden>Браузер не разрешил сохранять данные. Изменения действуют только до закрытия страницы; сделай резервную копию в настройках.</div>
   <main class="shell">
     <header class="top">
       <a class="back" href="index.html" aria-label="Назад в Affirm">‹</a>
@@ -100,7 +103,7 @@
           <span class="switch-track"></span>
         </label>
       </div>
-      <div class="setting-help" style="margin-top:14px">Дневная цель: 30 карт · +1 XP за карту · +20 XP за цель · +100 XP за полный круг.</div>
+      <div class="setting-help" style="margin-top:14px">Дневная цель: все уникальные карты активной колоды за день · +1 XP за карту · +20 XP за цель · +100 XP за полный круг.</div>
     </section>
 
     <section class="card">
@@ -114,7 +117,7 @@
         <select id="newTheme"></select>
       </div>
       <button class="primary" id="addBtn">Добавить в ленту</button>
-      <div class="notice" id="notice"></div>
+      <div class="notice" id="notice" role="status" aria-live="polite"></div>
     </section>
 
     <section class="card">
@@ -130,10 +133,17 @@
         <select id="filterTheme"><option value="all">Все разделы</option></select>
       </div>
       <div class="actions" style="margin-bottom:12px">
+        <button class="secondary" id="undoDelete" hidden>Отменить удаление</button>
         <button class="secondary" id="restoreBtn">Вернуть удалённые</button>
         <button class="secondary" id="resetEditsBtn">Сбросить правки</button>
       </div>
       <div id="list" class="row-list"><div class="loading">Загружаю аффирмации…</div></div>
+    </section>
+    <section class="card">
+      <h2>Резервная копия</h2>
+      <p class="setting-help">Сохрани аффирмации, правки, избранное и прогресс в файл для переноса на другое устройство.</p>
+      <button class="secondary" id="exportBtn">Скачать копию</button>
+      <div class="field" style="margin-top:16px"><label for="importFile">Восстановить из файла JSON</label><input id="importFile" type="file" accept=".json,application/json" /></div>
     </section>
   </main>
 
@@ -151,6 +161,7 @@
         <label for="editTheme">Раздел</label>
         <select id="editTheme"></select>
       </div>
+      <p id="editError" role="alert"></p>
       <div class="edit-actions">
         <button class="secondary" id="cancelEdit" type="button">Отмена</button>
         <button class="primary" id="saveEdit" type="button">Сохранить</button>
@@ -158,297 +169,9 @@
     </div>
   </div>
 
-  <script>
-    const CUSTOM_KEY = 'affirm_custom_v1';
-    const DELETED_KEY = 'affirm_deleted_v1';
-    const EDITED_KEY = 'affirm_edits_v1';
-    const SAVED_KEY = 'affirm_strong500_saved_v2';
-    const HAPTICS_KEY = 'affirm_haptics_v1';
-
-    const THEME_LABELS = {
-      self:'Я-концепция', decisions:'Решения и уверенность', luck:'Удача и реальность',
-      calm:'Спокойствие', focus:'Фокус и действие', money:'Деньги и доход',
-      lifestyle:'Богатство и образ жизни', ideas:'Идеи и продукты',
-      ownership:'Ownership и партнёрство', team:'Команда', yana:'Яна и взаимность',
-      love:'Любовь и отношения', family:'Семья и дом', attraction:'Привлекательность и близость',
-      health:'Тело, здоровье и энергия', learning:'Обучение и новые навыки',
-      newlife:'Новая жизнь и смысл', fulfilled:'Уже сбылось'
-    };
-
-    const newText = document.getElementById('newText');
-    const newTheme = document.getElementById('newTheme');
-    const filterTheme = document.getElementById('filterTheme');
-    const list = document.getElementById('list');
-    const search = document.getElementById('search');
-    const notice = document.getElementById('notice');
-    const editBackdrop = document.getElementById('editBackdrop');
-    const editText = document.getElementById('editText');
-    const editTheme = document.getElementById('editTheme');
-    const hapticsToggle = document.getElementById('hapticsToggle');
-    const storedHaptics = localStorage.getItem(HAPTICS_KEY);
-    hapticsToggle.checked = storedHaptics === null || (storedHaptics !== '0' && storedHaptics !== 'false');
-    hapticsToggle.addEventListener('change', () => {
-      localStorage.setItem(HAPTICS_KEY, hapticsToggle.checked ? '1' : '0');
-      if (hapticsToggle.checked && navigator.vibrate) { try { navigator.vibrate(40); } catch {} }
-    });
-    let base = [];
-    let editingItem = null;
-
-    function loadJson(key, fallback) {
-      try {
-        const value = JSON.parse(localStorage.getItem(key));
-        return value ?? fallback;
-      } catch { return fallback; }
-    }
-
-    function customItems() {
-      const items = loadJson(CUSTOM_KEY, []);
-      return Array.isArray(items) ? items.filter(x => x && x.id && x.text && THEME_LABELS[x.theme]) : [];
-    }
-
-    function deletedIds() {
-      const ids = loadJson(DELETED_KEY, []);
-      return new Set(Array.isArray(ids) ? ids : []);
-    }
-
-    function editedItems() {
-      const edits = loadJson(EDITED_KEY, {});
-      return edits && typeof edits === 'object' && !Array.isArray(edits) ? edits : {};
-    }
-
-    function saveCustom(items) { localStorage.setItem(CUSTOM_KEY, JSON.stringify(items)); }
-    function saveDeleted(set) { localStorage.setItem(DELETED_KEY, JSON.stringify([...set])); }
-    function saveEdits(edits) { localStorage.setItem(EDITED_KEY, JSON.stringify(edits)); }
-
-    function showNotice(text) {
-      notice.textContent = text;
-      notice.classList.add('show');
-      clearTimeout(showNotice.timer);
-      showNotice.timer = setTimeout(() => notice.classList.remove('show'), 1800);
-    }
-
-    function parseBaseAffirmations(html) {
-      const startMarker = 'const BASE_AFFIRMATIONS = [';
-      const start = html.indexOf(startMarker);
-      if (start < 0) throw new Error('BASE_AFFIRMATIONS not found');
-      const after = html.slice(start + 'const BASE_AFFIRMATIONS = '.length);
-      const end = after.indexOf('].map((x, i) =>');
-      if (end < 0) throw new Error('AFFIRMATIONS end not found');
-      const rawArray = after.slice(0, end + 1);
-      // JavaScript arrays may legally end with a trailing comma, but JSON.parse rejects it.
-      const normalizedArray = rawArray.replace(/,\s*]/g, ']');
-      const rows = JSON.parse(normalizedArray);
-      return rows.map((x, i) => ({ id:`u${i+1}`, theme:x[0], text:x[1], source:'base' }));
-    }
-
-    function allActive() {
-      const deleted = deletedIds();
-      const edits = editedItems();
-      const editedBase = base.map(item => {
-        const edit = edits[item.id];
-        return edit && edit.text && THEME_LABELS[edit.theme]
-          ? { ...item, text:edit.text, theme:edit.theme, edited:true }
-          : item;
-      });
-      const custom = customItems().map(x => ({...x, source:'custom'}));
-      const combined = [...editedBase.filter(x => !deleted.has(x.id)), ...custom.filter(x => !deleted.has(x.id))];
-      const seen = new Set();
-      return combined.filter(item => {
-        const key = String(item.text || '').trim().toLocaleLowerCase('ru-RU').replace(/\s+/g, ' ').replace(/[.!?…]+$/g, '');
-        if (!key || seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-    }
-
-    function removeFromSaved(id) {
-      const saved = loadJson(SAVED_KEY, []);
-      if (!Array.isArray(saved)) return;
-      localStorage.setItem(SAVED_KEY, JSON.stringify(saved.filter(x => x !== id)));
-    }
-
-    function render() {
-      const custom = customItems();
-      const deleted = deletedIds();
-      const active = allActive();
-      document.getElementById('activeCount').textContent = active.length;
-      const edits = editedItems();
-      document.getElementById('customCount').textContent = custom.length;
-      document.getElementById('editedCount').textContent = Object.keys(edits).filter(id => base.some(x => x.id === id)).length;
-      document.getElementById('deletedCount').textContent = [...deleted].filter(id => base.some(x => x.id === id)).length;
-      document.getElementById('restoreBtn').disabled = deleted.size === 0;
-      document.getElementById('resetEditsBtn').disabled = Object.keys(edits).length === 0;
-
-      const q = search.value.trim().toLowerCase();
-      const theme = filterTheme.value;
-      const filtered = active.filter(item => {
-        const matchesText = !q || item.text.toLowerCase().includes(q);
-        const matchesTheme = theme === 'all' || item.theme === theme;
-        return matchesText && matchesTheme;
-      });
-
-      list.innerHTML = '';
-      if (!filtered.length) {
-        const empty = document.createElement('div');
-        empty.className = 'empty';
-        empty.textContent = 'Ничего не найдено.';
-        list.appendChild(empty);
-        return;
-      }
-
-      filtered.forEach(item => {
-        const row = document.createElement('div');
-        row.className = 'item';
-        const main = document.createElement('div');
-        const text = document.createElement('div');
-        text.className = 'item-text';
-        text.textContent = item.text;
-        const meta = document.createElement('div');
-        meta.className = 'meta';
-        const tag = document.createElement('span');
-        tag.className = 'tag';
-        tag.textContent = THEME_LABELS[item.theme] || item.theme;
-        meta.appendChild(tag);
-        if (item.source === 'custom') {
-          const customTag = document.createElement('span');
-          customTag.className = 'tag custom-tag';
-          customTag.textContent = 'добавлено мной';
-          meta.appendChild(customTag);
-        }
-        if (item.edited) {
-          const editedTag = document.createElement('span');
-          editedTag.className = 'tag edited-tag';
-          editedTag.textContent = 'изменено';
-          meta.appendChild(editedTag);
-        }
-        main.append(text, meta);
-
-        const controls = document.createElement('div');
-        controls.className = 'item-actions';
-        const edit = document.createElement('button');
-        edit.className = 'edit';
-        edit.type = 'button';
-        edit.setAttribute('aria-label', 'Редактировать аффирмацию');
-        edit.textContent = '✎';
-        edit.addEventListener('click', () => openEdit(item));
-
-        const del = document.createElement('button');
-        del.className = 'delete';
-        del.type = 'button';
-        del.setAttribute('aria-label', 'Удалить аффирмацию');
-        del.textContent = '×';
-        del.addEventListener('click', () => deleteItem(item));
-        controls.append(edit, del);
-        row.append(main, controls);
-        list.appendChild(row);
-      });
-    }
-
-    function openEdit(item) {
-      editingItem = item;
-      editText.value = item.text;
-      editTheme.value = item.theme;
-      editBackdrop.classList.add('open');
-      document.body.style.overflow = 'hidden';
-      setTimeout(() => editText.focus(), 50);
-    }
-
-    function closeEdit() {
-      editingItem = null;
-      editBackdrop.classList.remove('open');
-      document.body.style.overflow = '';
-    }
-
-    function saveCurrentEdit() {
-      if (!editingItem) return;
-      const text = editText.value.trim();
-      const theme = editTheme.value;
-      if (!text) { showNotice('Текст аффирмации пустой.'); return; }
-      if (!THEME_LABELS[theme]) return;
-
-      if (editingItem.source === 'custom') {
-        const items = customItems();
-        const index = items.findIndex(x => x.id === editingItem.id);
-        if (index >= 0) items[index] = { ...items[index], text, theme };
-        saveCustom(items);
-      } else {
-        const edits = editedItems();
-        const original = base.find(x => x.id === editingItem.id);
-        if (original && original.text === text && original.theme === theme) delete edits[editingItem.id];
-        else edits[editingItem.id] = { text, theme };
-        saveEdits(edits);
-      }
-      closeEdit();
-      showNotice('Изменения сохранены.');
-      render();
-    }
-
-    function deleteItem(item) {
-      if (item.source === 'custom') {
-        saveCustom(customItems().filter(x => x.id !== item.id));
-      } else {
-        const deleted = deletedIds();
-        deleted.add(item.id);
-        saveDeleted(deleted);
-      }
-      removeFromSaved(item.id);
-      render();
-    }
-
-    document.getElementById('addBtn').addEventListener('click', () => {
-      const text = newText.value.trim();
-      const theme = newTheme.value;
-      if (!text) { showNotice('Сначала напиши текст аффирмации.'); return; }
-      const items = customItems();
-      const id = `c${Date.now()}${Math.floor(Math.random()*10000)}`;
-      items.push({ id, theme, text });
-      saveCustom(items);
-      newText.value = '';
-      showNotice('Добавлено в ленту.');
-      render();
-    });
-
-    document.getElementById('restoreBtn').addEventListener('click', () => {
-      localStorage.removeItem(DELETED_KEY);
-      showNotice('Все стандартные аффирмации восстановлены.');
-      render();
-    });
-
-    document.getElementById('resetEditsBtn').addEventListener('click', () => {
-      localStorage.removeItem(EDITED_KEY);
-      showNotice('Правки стандартных аффирмаций сброшены.');
-      render();
-    });
-
-    document.getElementById('saveEdit').addEventListener('click', saveCurrentEdit);
-    document.getElementById('cancelEdit').addEventListener('click', closeEdit);
-    document.getElementById('closeEdit').addEventListener('click', closeEdit);
-    editBackdrop.addEventListener('click', (e) => { if (e.target === editBackdrop) closeEdit(); });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && editBackdrop.classList.contains('open')) closeEdit();
-    });
-
-    search.addEventListener('input', render);
-    filterTheme.addEventListener('change', render);
-
-    async function init() {
-      Object.entries(THEME_LABELS).forEach(([value,label]) => {
-        const a = document.createElement('option'); a.value = value; a.textContent = label; newTheme.appendChild(a);
-        const b = document.createElement('option'); b.value = value; b.textContent = label; filterTheme.appendChild(b);
-        const c = document.createElement('option'); c.value = value; c.textContent = label; editTheme.appendChild(c);
-      });
-      try {
-        const response = await fetch(`index.html?settings=${Date.now()}`, { cache:'no-store' });
-        const html = await response.text();
-        base = parseBaseAffirmations(html);
-        render();
-      } catch (err) {
-        list.innerHTML = '<div class="empty">Не удалось загрузить стандартные аффирмации. Обнови страницу.</div>';
-        console.error(err);
-      }
-    }
-
-    init();
-  </script>
+  <script src="assets/catalog.js"></script>
+  <script src="assets/state.js"></script>
+  <script src="assets/store.js"></script>
+  <script src="assets/settings.js"></script>
 </body>
 </html>
