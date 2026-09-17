@@ -127,3 +127,73 @@ test('aborted transaction does not report success or overwrite prior data',async
   await assert.rejects(e.w.AffirmStore.transaction(s=>{s.saved=['u1'];throw Error('Write rejected');}),/Write rejected/);
   assert.deepEqual((await e.w.AffirmStore.read()).saved,[]);
 });
+
+test('one persistent header opens progress, traps focus and restores its trigger',async t=>{
+  const e=setup();t.after(()=>e.w.close());await loaded(e);
+  const d=e.w.document,card=d.querySelector('.card');e.w.testObserver.show(card);
+  await wait(()=>d.querySelector('.view-count').textContent==='1');
+  assert.equal(d.querySelectorAll('.topbar').length,1);
+  assert.equal(d.querySelectorAll('#feed .topbar').length,0);
+  assert.equal(d.querySelectorAll('.card:not(.active)').length,13);
+  assert.equal(d.querySelector('.card:not(.active)').inert,true);
+  const trigger=d.getElementById('openProgress');trigger.focus();trigger.click();
+  const modal=d.getElementById('progressDrawer'),close=d.getElementById('closeProgress');
+  assert.equal(modal.hidden,false);assert.equal(d.getElementById('feed').inert,true);
+  assert.equal(d.getElementById('topbar').inert,true);assert.equal(d.activeElement,close);
+  assert.equal(modal.querySelector('.xp-count').textContent,'1');
+  assert.equal(modal.querySelectorAll('#achievements li').length,9);
+  const tab=new e.w.KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true});close.dispatchEvent(tab);
+  assert.equal(tab.defaultPrevented,true);assert.equal(d.activeElement,close);
+  close.dispatchEvent(new e.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+  assert.equal(modal.hidden,true);assert.equal(d.activeElement,trigger);
+  assert.equal(d.getElementById('feed').inert,false);assert.equal(d.getElementById('topbar').inert,false);
+});
+test('wheel inertia pages once, while zoom and scrolling long text stay native',async t=>{
+  const e=setup();t.after(()=>e.w.close());await loaded(e);
+  const feed=e.w.document.getElementById('feed'),text=e.w.document.querySelector('.text');
+  Object.defineProperty(feed,'clientHeight',{value:600});
+  const movements=[];feed.scrollBy=options=>movements.push(options.top);
+  const wheel=(target,options)=>{const event=new e.w.WheelEvent('wheel',{deltaY:180,bubbles:true,cancelable:true,...options});target.dispatchEvent(event);return event;};
+  for(let i=0;i<12;i++)assert.equal(wheel(feed).defaultPrevented,true);
+  assert.deepEqual(movements,[600]);
+  assert.equal(wheel(feed,{ctrlKey:true}).defaultPrevented,false);
+  assert.equal(wheel(feed,{deltaX:300}).defaultPrevented,false);
+  Object.defineProperty(text,'clientHeight',{value:150});Object.defineProperty(text,'scrollHeight',{value:500});
+  assert.equal(wheel(text).defaultPrevented,false);
+  const down=new e.w.KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true,cancelable:true});text.dispatchEvent(down);
+  assert.equal(down.defaultPrevented,false);
+  await new Promise(r=>setTimeout(r,410));
+  text.scrollTop=350;assert.equal(wheel(text).defaultPrevented,true);
+  assert.deepEqual(movements,[600,600]);
+  await new Promise(r=>setTimeout(r,410));
+  assert.equal(wheel(feed,{deltaY:-3,deltaMode:1}).defaultPrevented,true);
+  assert.deepEqual(movements,[600,600,-600]);
+});
+test('cards skipped by a fast jump return after the last card and complete the round once',async t=>{
+  const e=setup();t.after(()=>e.w.close());await loaded(e);
+  await e.w.AffirmStore.transaction(s=>{
+    s.deleted=e.w.AffirmCatalog.items.filter(x=>!['u1','u2','u3'].includes(x.id)).map(x=>x.id);
+    Core.ensureRound(s,e.w.AffirmCatalog);
+  });
+  const feed=e.w.document.getElementById('feed'),[first,skipped,last]=[...feed.children];
+  e.w.testObserver.show(first);await wait(async()=>(await e.w.AffirmStore.read()).round.seen.length===1);
+  e.w.testObserver.show(last);
+  await wait(()=>feed.children.length===4);
+  let state=await e.w.AffirmStore.read();assert.equal(state.round.complete,false);assert.equal(state.game.cycles,0);
+  assert.equal(feed.lastElementChild.dataset.id,skipped.dataset.id);
+  e.w.testObserver.show(feed.lastElementChild);
+  await wait(async()=>(await e.w.AffirmStore.read()).round.complete);
+  state=await e.w.AffirmStore.read();assert.equal(state.game.cycles,1);assert.equal(state.game.totalCards,3);
+});
+test('long sessions keep a bounded DOM while preserving every unread card in the round',async t=>{
+  const e=setup();t.after(()=>e.w.close());await loaded(e);
+  const feed=e.w.document.getElementById('feed');
+  for(let i=0;i<18;i++) {
+    e.w.testObserver.show(feed.lastElementChild);
+    await wait(async()=>(await e.w.AffirmStore.read()).round.seen.length===i+1);
+    assert.ok(feed.children.length<=60);
+  }
+  const state=await e.w.AffirmStore.read();
+  assert.equal(state.round.order.length,441);assert.equal(state.round.seen.length,18);
+  assert.equal(state.game.cycles,0);assert.equal(e.w.document.querySelectorAll('.topbar').length,1);
+});

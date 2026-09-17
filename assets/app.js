@@ -3,6 +3,8 @@
   const Core = window.AffirmState, Store = window.AffirmStore, Catalog = window.AffirmCatalog;
   const feed = document.getElementById('feed');
   const drawer = document.getElementById('drawer');
+  const progressDrawer = document.getElementById('progressDrawer');
+  const topbar = document.getElementById('topbar');
   const backdrop = document.getElementById('backdrop');
   const savedList = document.getElementById('savedList');
   const rewardOverlay = document.getElementById('rewardOverlay');
@@ -14,8 +16,9 @@
   let intervals = [], lastFlush = Date.now(), timerBusy = false;
   const counted = new WeakMap(), rewards = [];
   let rewardShowing = false;
+  let wheelTotal=0, wheelLatched=false, wheelTimer, navigationUntil=0;
   const MAX_CARDS = 60;
-  drawer.hidden = backdrop.hidden = rewardOverlay.hidden = true;
+  drawer.hidden = progressDrawer.hidden = backdrop.hidden = rewardOverlay.hidden = true;
   drawer.setAttribute('role','dialog'); drawer.setAttribute('aria-modal','true');
 
   function message(text) {
@@ -35,16 +38,30 @@
   }
   function today() { return state?.days[Core.dateKey()] || {cards:0,timeMs:0,seen:[],completed:false}; }
   function updateHud() {
-    if (!state || !activeCard) return;
+    if (!state) return;
     const day=today(), game=state.game, items=Core.activeItems(state,Catalog);
     const seen=items.filter(x=>day.seen.includes(x.id)).length;
     const recent=game.lastGoalDate===Core.dateKey() || game.lastGoalDate===Core.previousDay(Core.dateKey());
     const values={'.session-timer':time(sessionMs),'.day-timer':time(day.timeMs),'.view-count':day.cards,
       '.cycle-remaining':state.round ? state.round.order.length-state.round.seen.length : 0,
       '.streak-count':recent ? game.streak : 0,'.xp-count':game.totalXp,'.level-count':Math.floor(game.totalXp/250)+1,
-      '.goal-progress':day.completed ? 'выполнена' : `1 круг · ${seen} / ${items.length}`};
-    for (const [selector,value] of Object.entries(values)) activeCard.querySelector(selector).textContent=value;
-    activeCard.querySelector('.goal-fill').style.width=`${day.completed ? 100 : items.length ? seen/items.length*100 : 0}%`;
+      '.total-cards':game.totalCards,'.cycle-count':game.cycles,
+      '.goal-progress':day.completed ? 'Цель выполнена' : `${seen} / ${items.length}`};
+    for (const [selector,value] of Object.entries(values)) {
+      for (const element of document.querySelectorAll(selector)) element.textContent=value;
+    }
+    document.querySelector('.goal-fill').style.width=`${day.completed ? 100 : items.length ? seen/items.length*100 : 0}%`;
+    const list=document.getElementById('achievements');
+    const earned=game.achievements.join(',');
+    if(list.dataset.earned!==earned) {
+      list.dataset.earned=earned; list.replaceChildren();
+      for(const [key,,emoji,title] of Core.milestones(game)) {
+        const item=document.createElement('li'), label=document.createElement('span'), status=document.createElement('span');
+        const unlocked=game.achievements.includes(key);
+        item.className=unlocked?'earned':''; label.textContent=`${emoji} ${title}`;
+        status.textContent=unlocked?'Получено':'Впереди'; item.append(label,status); list.appendChild(item);
+      }
+    }
   }
   function syncFavorites() {
     if (!state) return;
@@ -54,7 +71,7 @@
       button.setAttribute('aria-pressed',String(saved));
     }
     const count=Core.allItems(state,Catalog).filter(x=>state.saved.includes(x.id)).length;
-    for (const badge of feed.querySelectorAll('.count-badge')) { badge.textContent=count; badge.hidden=!count; }
+    for (const badge of topbar.querySelectorAll('.count-badge')) { badge.textContent=count; badge.hidden=!count; }
     if (!drawer.hidden) renderSaved();
   }
   function applyState(next) {
@@ -77,21 +94,10 @@
   }
   function makeCard(item) {
     const card=document.createElement('section');
-    card.className='card'; card.dataset.id=item.id; card.dataset.roundId=state.round.id;
+    card.className='card'; card.dataset.id=item.id; card.dataset.roundId=state.round.id; card.inert=true;
     // Only fixed application markup goes through innerHTML. All user strings use textContent.
     card.innerHTML=`<div class="bg"></div><div class="overlay"></div>
-      <div class="topbar"><div class="brand">Affirm</div>
-        <div class="session-stats" aria-label="Время сегодня и текущая сессия">
-          <span class="stat-line">сессия <span class="session-timer">00:00</span></span>
-          <span class="stat-line">сегодня <span class="day-timer">00:00</span> · <span class="view-count">0</span> карт.</span>
-          <span class="stat-line">до нового круга <span class="cycle-remaining">0</span></span>
-          <span class="stat-line game-line">🔥 <span class="streak-count">0</span> · ⭐ <span class="xp-count">0</span> XP · ур. <span class="level-count">1</span></span>
-          <span class="stat-line goal-line">цель дня · <span class="goal-progress"></span></span>
-          <span class="goal-track"><span class="goal-fill"></span></span>
-        </div>
-        <div class="top-actions"><a class="icon-btn settings-link" href="settings.html" aria-label="Настройки">⚙</a>
-          <button class="icon-btn open-saved" aria-label="Открыть сохранённые">♡<span class="count-badge" hidden></span></button></div>
-      </div><div class="content"><div class="topic"></div><p class="text"></p></div>
+      <div class="content"><div class="topic"></div><p class="text" tabindex="0"></p></div>
       <button class="icon-btn favorite" aria-label="Сохранить" aria-pressed="false">♡</button>`;
     card.querySelector('.bg').style.backgroundImage=`url('${imageFor(item)}')`;
     card.querySelector('.topic').textContent=Catalog.themes[item.theme].label;
@@ -105,8 +111,14 @@
       } catch(error) { message(error.message); }
       finally { button.disabled=false; }
     });
-    card.querySelector('.open-saved').addEventListener('click',()=>openModal(drawer));
     return card;
+  }
+  function recoverSkipped() {
+    // Fast touch/scrollbar jumps can miss the view threshold. Offer every unseen card again.
+    if(!activeCard || viewPending || activeCard!==feed.lastElementChild || planned<plan.length ||
+      !state.round || state.round.complete || !state.round.seen.includes(activeCard.dataset.id)) return;
+    const pending=Core.preview(state,Catalog).filter(item=>!state.round.seen.includes(item.id));
+    if(pending.length) { plan=pending; planned=0; appendCards(); }
   }
   function appendCards(n=10) {
     if (!state?.round) return;
@@ -141,23 +153,25 @@
   }
   async function recordActive() {
     const card=activeCard, key=Core.dateKey();
-    if(!card || viewPending || document.hidden || !document.hasFocus() || !drawer.hidden || !rewardOverlay.hidden || counted.get(card)===key) return;
+    if(!card || viewPending || document.hidden || !document.hasFocus() || !drawer.hidden || !progressDrawer.hidden || !rewardOverlay.hidden || counted.get(card)===key) return;
     viewPending=true;
     try {
       const {state:next,result}=await Store.transaction(s=>Core.view(s,Catalog,card.dataset.id,card.dataset.roundId,key));
       counted.set(card,key); applyState(next); rewards.push(...result); presentReward();
     } catch(error) { message(error.message); }
-    finally { viewPending=false; if(activeCard!==card) recordActive(); }
+    finally { viewPending=false; recoverSkipped(); if(activeCard!==card) recordActive(); }
   }
   const observer=new IntersectionObserver(entries=>{
     for(const entry of entries) {
       if(!feed.contains(entry.target)) continue;
       const visible=entry.isIntersecting && entry.intersectionRatio>=.65;
       entry.target.classList.toggle('active',visible);
+      entry.target.inert=!visible;
       if(visible) {
         activeCard=entry.target; updateHud(); recordActive();
         const index=[...feed.children].indexOf(activeCard);
         if(feed.children.length-index<5) appendCards();
+        recoverSkipped();
       }
     }
   },{root:feed,threshold:[.65]});
@@ -176,18 +190,19 @@
   }
   function openModal(modal) {
     previousFocus=document.activeElement;
-    if(modal===drawer) { renderSaved(); backdrop.hidden=false; backdrop.classList.add('open'); }
-    modal.hidden=false; modal.classList.add('open'); feed.inert=true; feed.style.overflowY='hidden';
+    if(modal===drawer) renderSaved();
+    if(modal!==rewardOverlay) { backdrop.hidden=false; backdrop.classList.add('open'); }
+    modal.hidden=false; modal.classList.add('open'); feed.inert=topbar.inert=true; feed.style.overflowY='hidden';
     modal.querySelector('button')?.focus();
   }
   function closeModal(modal) {
     modal.hidden=true; modal.classList.remove('open');
-    if(modal===drawer) { backdrop.hidden=true; backdrop.classList.remove('open'); }
-    feed.inert=false; feed.style.overflowY='auto';
+    if(modal!==rewardOverlay) { backdrop.hidden=true; backdrop.classList.remove('open'); }
+    feed.inert=topbar.inert=false; feed.style.overflowY='auto';
     if(previousFocus?.isConnected) previousFocus.focus({preventScroll:true});
   }
   function presentReward() {
-    if(rewardShowing || !rewards.length || !drawer.hidden) return;
+    if(rewardShowing || !rewards.length || !drawer.hidden || !progressDrawer.hidden) return;
     const reward=rewards.shift(); rewardShowing=true;
     document.getElementById('rewardEmoji').textContent=reward.emoji;
     document.getElementById('rewardTitle').textContent=reward.title;
@@ -201,14 +216,18 @@
     else if(state.round?.complete) prepare();
     else recordActive();
   }
-  document.getElementById('closeDrawer').addEventListener('click',()=>{closeModal(drawer); presentReward(); recordActive();});
-  backdrop.addEventListener('click',()=>document.getElementById('closeDrawer').click());
+  function closeDrawer(modal) { closeModal(modal); presentReward(); recordActive(); }
+  document.querySelector('.open-saved').addEventListener('click',()=>openModal(drawer));
+  document.getElementById('openProgress').addEventListener('click',()=>openModal(progressDrawer));
+  document.getElementById('closeDrawer').addEventListener('click',()=>closeDrawer(drawer));
+  document.getElementById('closeProgress').addEventListener('click',()=>closeDrawer(progressDrawer));
+  backdrop.addEventListener('click',()=>closeDrawer(drawer.hidden?progressDrawer:drawer));
   rewardClose.addEventListener('click',closeReward);
   rewardOverlay.addEventListener('click',e=>{if(e.target===rewardOverlay) closeReward();});
   document.addEventListener('keydown',e=>{
-    const modal=!rewardOverlay.hidden?rewardOverlay:!drawer.hidden?drawer:null;
+    const modal=!rewardOverlay.hidden?rewardOverlay:!drawer.hidden?drawer:!progressDrawer.hidden?progressDrawer:null;
     if(modal) {
-      if(e.key==='Escape') { e.preventDefault(); modal===drawer?document.getElementById('closeDrawer').click():closeReward(); }
+      if(e.key==='Escape') { e.preventDefault(); modal===rewardOverlay?closeReward():closeDrawer(modal); }
       if(e.key==='Tab') {
         const controls=[...modal.querySelectorAll('button,a[href],input,textarea,select')];
         if(e.shiftKey && document.activeElement===controls[0]) {e.preventDefault();controls.at(-1)?.focus();}
@@ -218,11 +237,35 @@
     }
     if(e.target.closest('button,a,input,textarea,select,[contenteditable="true"]') || e.altKey || e.ctrlKey || e.metaKey) return;
     if(['ArrowDown','PageDown',' ','ArrowUp','PageUp'].includes(e.key)) {
+      const direction=['ArrowUp','PageUp'].includes(e.key) || (e.key===' ' && e.shiftKey)?-1:1;
+      if(canScrollText(e.target,direction)) return;
       e.preventDefault();
-      if(state.round?.complete && ['ArrowDown','PageDown',' '].includes(e.key)) {prepare();return;}
-      feed.scrollBy({top:feed.clientHeight*(['ArrowUp','PageUp'].includes(e.key)?-1:1),behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+      navigate(direction);
     }
   });
+  function canScrollText(target,direction) {
+    const text=target.closest('.text');
+    return text && text.scrollHeight>text.clientHeight+1 &&
+      (direction<0 ? text.scrollTop>0 : text.scrollTop+text.clientHeight<text.scrollHeight-1);
+  }
+  function navigate(direction) {
+    if(Date.now()<navigationUntil) return;
+    if(state.round?.complete && direction>0) {prepare();return;}
+    navigationUntil=Date.now()+380;
+    feed.scrollBy({top:feed.clientHeight*direction,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+  }
+  feed.addEventListener('wheel',e=>{
+    if(e.ctrlKey || e.metaKey || !e.deltaY || Math.abs(e.deltaX)>Math.abs(e.deltaY)) return;
+    const direction=Math.sign(e.deltaY);
+    if(canScrollText(e.target,direction)) return;
+    e.preventDefault(); activity();
+    clearTimeout(wheelTimer);
+    wheelTimer=setTimeout(()=>{wheelTotal=0;wheelLatched=false;},180);
+    if(wheelLatched) return;
+    const delta=e.deltaY*(e.deltaMode===1?16:e.deltaMode===2?feed.clientHeight:1);
+    wheelTotal=Math.sign(wheelTotal)===direction?wheelTotal+delta:delta;
+    if(Math.abs(wheelTotal)>=30) {wheelLatched=true;navigate(direction);}
+  },{passive:false});
   async function flushTime() {
     if(timerBusy || !intervals.length) return;
     const pending=intervals; intervals=[]; timerBusy=true;
