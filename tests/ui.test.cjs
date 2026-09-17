@@ -1,0 +1,129 @@
+const test=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const {JSDOM,ResourceLoader,VirtualConsole}=require('jsdom');
+const {IDBFactory}=require('fake-indexeddb');
+const project=path.resolve(__dirname,'..');
+const Core=require('../assets/state.js');
+const wait=async predicate=>{for(let n=0;n<200;n++){if(await predicate())return;await new Promise(r=>setTimeout(r,10));}throw Error('Condition timed out');};
+class Assets extends ResourceLoader {
+  fetch(url){const pathname=new URL(url).pathname;return pathname.startsWith('/assets/')?Promise.resolve(fs.readFileSync(path.join(project,pathname))):null;}
+}
+function setup(page='index.html',{idb=new IDBFactory(),denyStorage=false,channelHub=[]}={}){
+  const errors=[];
+  const vc=new VirtualConsole();vc.on('jsdomError',error=>errors.push(error));
+  const dom=new JSDOM(fs.readFileSync(path.join(project,page),'utf8'),{
+    url:`https://affirm.test/${page}`,runScripts:'dangerously',resources:new Assets(),pretendToBeVisual:true,virtualConsole:vc,
+    beforeParse(w){
+      w.indexedDB=idb;w.structuredClone=structuredClone;w.matchMedia=()=>({matches:false});
+      w.confirm=()=>true;w.document.hasFocus=()=>true;
+      if(denyStorage)Object.defineProperty(w,'localStorage',{get(){throw Error('Blocked');}});
+      w.BroadcastChannel=class{constructor(){channelHub.push(this);}postMessage(data){for(const ch of channelHub)if(ch!==this)setImmediate(()=>ch.onmessage?.({data}));}close(){}};
+      w.IntersectionObserver=class{
+        constructor(cb){this.cb=cb;this.elements=new Set();w.testObserver=this;}
+        observe(el){this.elements.add(el);}unobserve(el){this.elements.delete(el);}disconnect(){this.elements.clear();}
+        show(el){this.cb([...this.elements].map(target=>({target,isIntersecting:target===el,intersectionRatio:target===el?1:0})));}
+      };
+      w.HTMLElement.prototype.scrollBy=function(options){this.lastScroll=options;};
+    }
+  });
+  return {dom,w:dom.window,errors};
+}
+async function loaded(env,page='index.html'){
+  await wait(()=>env.w.AffirmStore && (page==='index.html'?env.w.document.querySelector('.card'):env.w.document.getElementById('activeCount').textContent!=='—'));
+  assert.deepEqual(env.errors,[]);
+}
+test('simultaneous tabs preserve both favorites and serialize duplicate view awards',async t=>{
+  const idb=new IDBFactory(),hub=[];
+  const a=setup('settings.html',{idb,channelHub:hub}),b=setup('settings.html',{idb,channelHub:hub});
+  t.after(()=>{a.w.close();b.w.close();});await Promise.all([loaded(a,'settings.html'),loaded(b,'settings.html')]);
+  await Promise.all([
+    a.w.AffirmStore.transaction(s=>Core.toggleSaved(s,a.w.AffirmCatalog,'u1')),
+    b.w.AffirmStore.transaction(s=>Core.toggleSaved(s,b.w.AffirmCatalog,'u2'))
+  ]);
+  assert.deepEqual((await a.w.AffirmStore.read()).saved.sort(),['u1','u2']);
+  const {state}=await a.w.AffirmStore.transaction(s=>Core.ensureRound(s,a.w.AffirmCatalog));
+  const id=state.round.order[0],round=state.round.id;
+  await Promise.all([a.w.AffirmStore.transaction(s=>Core.view(s,a.w.AffirmCatalog,id,round,'2026-09-17')),b.w.AffirmStore.transaction(s=>Core.view(s,b.w.AffirmCatalog,id,round,'2026-09-17'))]);
+  assert.equal((await a.w.AffirmStore.read()).game.totalCards,1);
+  await Promise.all([a.w.AffirmStore.transaction(s=>Core.addTime(s,100,300)),b.w.AffirmStore.transaction(s=>Core.addTime(s,300,500))]);
+  const after=await a.w.AffirmStore.read();assert.equal(Object.values(after.days).reduce((n,d)=>n+d.timeMs,0),400);
+});
+test('rendering 14 cards consumes nothing; reload resumes the viewed card without extra XP',async t=>{
+  const idb=new IDBFactory();const a=setup('index.html',{idb});t.after(()=>a.w.close());await loaded(a);
+  let state=await a.w.AffirmStore.read();assert.equal(state.round.seen.length,0);assert.equal(a.w.document.querySelectorAll('.card').length,14);
+  const first=a.w.document.querySelector('.card');a.w.testObserver.show(first);
+  await wait(async()=>(await a.w.AffirmStore.read()).round.seen.length===1);
+  const b=setup('index.html',{idb});t.after(()=>b.w.close());await loaded(b);
+  const resumed=b.w.document.querySelector('.card');assert.equal(resumed.dataset.id,first.dataset.id);
+  b.w.testObserver.show(resumed);await wait(()=>b.w.document.querySelector('.view-count').textContent==='1');
+  state=await b.w.AffirmStore.read();assert.equal(state.game.totalXp,1);assert.equal(state.round.seen.length,1);
+});
+test('untrusted text renders literally in the feed and saved drawer',async t=>{
+  const e=setup();t.after(()=>e.w.close());await loaded(e);
+  const text='<img src=x onerror="window.injected=true"><b>Affirm</b>';
+  await e.w.AffirmStore.transaction(s=>{s.deleted=e.w.AffirmCatalog.items.map(x=>x.id);s.custom=[{id:'c-test',theme:'self',text}];s.saved=['c-test'];Core.ensureRound(s,e.w.AffirmCatalog);});
+  await wait(()=>e.w.document.querySelector('.text')?.textContent===text);
+  assert.equal(e.w.document.querySelectorAll('#feed img,#feed b').length,0);assert.equal(e.w.injected,undefined);
+  e.w.document.querySelector('.open-saved').click();assert.equal(e.w.document.querySelector('.saved-card p').textContent,text);
+  assert.equal(e.w.document.querySelectorAll('#savedList img,#savedList b').length,0);
+});
+test('empty deck offers settings, never resurrecting a deleted affirmation',async t=>{
+  const e=setup();t.after(()=>e.w.close());await loaded(e);
+  await e.w.AffirmStore.transaction(s=>{s.deleted=e.w.AffirmCatalog.items.map(x=>x.id);Core.ensureRound(s,e.w.AffirmCatalog);});
+  assert.equal(e.w.document.querySelectorAll('.card').length,0);assert.match(e.w.document.querySelector('#feed').textContent,/пока нет/);
+  assert.equal(e.w.document.querySelector('#feed a').getAttribute('href'),'settings.html');
+});
+test('space on a button is not hijacked; keyboard paging uses the feed height',async t=>{
+  const e=setup();t.after(()=>e.w.close());await loaded(e);
+  const feed=e.w.document.getElementById('feed');Object.defineProperty(feed,'clientHeight',{value:800});
+  const button=e.w.document.querySelector('.favorite');
+  const space=new e.w.KeyboardEvent('keydown',{key:' ',bubbles:true,cancelable:true});button.dispatchEvent(space);
+  assert.equal(space.defaultPrevented,false);assert.equal(feed.lastScroll,undefined);
+  feed.dispatchEvent(new e.w.KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true,cancelable:true}));
+  assert.equal(feed.lastScroll.top,800);
+});
+test('settings reject duplicates, preserve custom deletions for restore and save edits',async t=>{
+  const e=setup('settings.html');t.after(()=>e.w.close());await loaded(e,'settings.html');
+  const d=e.w.document;
+  d.getElementById('newText').value='Я достоин успеха.';d.getElementById('addBtn').click();
+  await wait(()=>d.getElementById('notice').textContent.includes('уже есть'));
+  assert.equal((await e.w.AffirmStore.read()).custom.length,0);
+  d.getElementById('newText').value='Тест сохранения';d.getElementById('addBtn').click();
+  await wait(()=>d.getElementById('customCount').textContent==='1');
+  d.getElementById('search').value='Тест сохранения';d.getElementById('search').dispatchEvent(new e.w.Event('input'));
+  d.querySelector('.edit').click();d.getElementById('editText').value='Тест изменения';d.getElementById('saveEdit').click();
+  await wait(()=>!d.getElementById('editBackdrop').classList.contains('open'));
+  assert.equal((await e.w.AffirmStore.read()).custom[0].text,'Тест изменения');
+  d.getElementById('search').value='Тест изменения';d.getElementById('search').dispatchEvent(new e.w.Event('input'));
+  d.querySelector('.delete').click();await wait(()=>d.getElementById('deletedCount').textContent==='1');
+  assert.equal((await e.w.AffirmStore.read()).custom.length,1);
+  d.getElementById('restoreBtn').click();await wait(()=>d.getElementById('deletedCount').textContent==='0');
+  assert.equal(d.querySelector('.item-text').textContent,'Тест изменения');
+});
+test('back-forward cache return reloads content edited in another page',async t=>{
+  const idb=new IDBFactory(),a=setup('index.html',{idb}),b=setup('settings.html',{idb});
+  t.after(()=>{a.w.close();b.w.close();});await Promise.all([loaded(a),loaded(b,'settings.html')]);
+  const id=a.w.document.querySelector('.card').dataset.id;
+  a.w.testObserver.show(a.w.document.querySelector('.card'));
+  await wait(async()=>(await a.w.AffirmStore.read()).round.resumeId===id);
+  await b.w.AffirmStore.transaction(s=>{s.edits[id]={theme:'self',text:'Изменено на другой странице'};});
+  a.w.dispatchEvent(new a.w.PageTransitionEvent('pageshow',{persisted:true}));
+  await wait(()=>a.w.document.querySelector('.text')?.textContent==='Изменено на другой странице');
+});
+test('denied storage never causes a blank settings page',async t=>{
+  const e=setup('settings.html',{idb:null,denyStorage:true});
+  t.after(()=>e.w.close());await loaded(e,'settings.html');
+  assert.equal(e.w.document.getElementById('activeCount').textContent,'441');
+  assert.equal(e.w.document.getElementById('storageWarning').hidden,false);
+  e.w.document.getElementById('newText').value='Текст временной сессии';
+  e.w.document.getElementById('addBtn').click();
+  await wait(()=>e.w.document.getElementById('customCount').textContent==='1');
+  assert.deepEqual(e.errors,[]);
+});
+test('aborted transaction does not report success or overwrite prior data',async t=>{
+  const e=setup('settings.html');t.after(()=>e.w.close());await loaded(e,'settings.html');
+  await assert.rejects(e.w.AffirmStore.transaction(s=>{s.saved=['u1'];throw Error('Write rejected');}),/Write rejected/);
+  assert.deepEqual((await e.w.AffirmStore.read()).saved,[]);
+});
