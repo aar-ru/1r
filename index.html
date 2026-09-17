@@ -1052,6 +1052,8 @@
     const DAILY_CARDS_PREFIX = 'affirm_daily_cards_v1:';
     const GAME_STATE_KEY = 'affirm_game_state_v1';
     const HAPTICS_KEY = 'affirm_haptics_v1';
+    const DAILY_GOAL_PROGRESS_PREFIX = 'affirm_daily_round_progress_v2:';
+    const DAILY_GOAL_MODE = 'viewed-full-round-v2';
     const DAILY_GOAL_CYCLES = 1;
     const XP_PER_CARD = 1;
     const XP_DAILY_GOAL = 20;
@@ -1096,6 +1098,7 @@
         streak: Math.max(0, Math.floor(Number(src.streak) || 0)),
         lastGoalDate: typeof src.lastGoalDate === 'string' ? src.lastGoalDate : '',
         lastCycleGoalDate: typeof src.lastCycleGoalDate === 'string' ? src.lastCycleGoalDate : '',
+        goalMode: typeof src.goalMode === 'string' ? src.goalMode : '',
         cycles: Math.max(0, Math.floor(Number(src.cycles) || 0)),
         achievements: Array.isArray(src.achievements) ? [...new Set(src.achievements.filter(x => typeof x === 'string'))] : []
       };
@@ -1107,6 +1110,22 @@
       // Give the new system credit for cards already viewed today before this feature existed.
       gameState.totalCards = viewedCount;
       gameState.totalXp = viewedCount * XP_PER_CARD;
+    }
+
+    // v2: a daily round is earned only by cards actually viewed after this goal starts.
+    // Reset the false same-day completion created by the old render/preload-based cycle logic once.
+    let dailyGoalViewed = Number(safeStorageGet(DAILY_GOAL_PROGRESS_PREFIX + dayKey) || 0);
+    if (!Number.isFinite(dailyGoalViewed) || dailyGoalViewed < 0) dailyGoalViewed = 0;
+    dailyGoalViewed = Math.floor(dailyGoalViewed);
+    if (gameState.goalMode !== DAILY_GOAL_MODE) {
+      gameState.goalMode = DAILY_GOAL_MODE;
+      gameState.lastCycleGoalDate = '';
+      dailyGoalViewed = 0;
+      safeStorageSet(DAILY_GOAL_PROGRESS_PREFIX + dayKey, '0');
+    }
+
+    function persistDailyGoalProgress() {
+      safeStorageSet(DAILY_GOAL_PROGRESS_PREFIX + dayKey, String(dailyGoalViewed));
     }
 
     function saveGameState() {
@@ -1146,15 +1165,13 @@
     function updateGameHud() {
       const level = gameLevel();
       const goalDone = gameState.lastCycleGoalDate === dayKey;
-      const activeCard = feed.querySelector('.card.active');
-      const remaining = Number(activeCard?.dataset.cycleRemaining);
-      const progress = Number.isFinite(remaining) && AFFIRMATIONS.length
-        ? Math.min(100, Math.max(0, (AFFIRMATIONS.length - remaining) / AFFIRMATIONS.length * 100))
+      const progress = AFFIRMATIONS.length
+        ? Math.min(100, Math.max(0, dailyGoalViewed / AFFIRMATIONS.length * 100))
         : 0;
       document.querySelectorAll('.streak-count').forEach(el => el.textContent = visibleStreak());
       document.querySelectorAll('.xp-count').forEach(el => el.textContent = gameState.totalXp);
       document.querySelectorAll('.level-count').forEach(el => el.textContent = level);
-      document.querySelectorAll('.goal-progress').forEach(el => el.textContent = '1 круг');
+      document.querySelectorAll('.goal-progress').forEach(el => el.textContent = `1 круг · ${Math.min(dailyGoalViewed, AFFIRMATIONS.length)} / ${AFFIRMATIONS.length}`);
       document.querySelectorAll('.goal-line, .goal-track').forEach(el => el.style.display = goalDone ? 'none' : '');
       document.querySelectorAll('.goal-fill').forEach(el => el.style.width = `${progress}%`);
     }
@@ -1219,7 +1236,7 @@
     }
 
     function completeDailyGoalIfNeeded(showCelebration = true) {
-      if (gameState.lastCycleGoalDate === dayKey) return;
+      if (gameState.lastCycleGoalDate === dayKey || dailyGoalViewed < AFFIRMATIONS.length) return;
       const yesterday = previousDateKey(dayKey);
       if (gameState.lastGoalDate !== dayKey) {
         gameState.streak = gameState.lastGoalDate === yesterday ? gameState.streak + 1 : 1;
@@ -1241,7 +1258,6 @@
       card.dataset.cycleAwarded = '1';
       gameState.cycles += 1;
       saveGameState();
-      completeDailyGoalIfNeeded(true);
       const levelChange = addXp(XP_FULL_CYCLE);
       showReward('🔄', 'Полный круг!', `Вся колода пройдена · +${XP_FULL_CYCLE} XP`, [120,60,120,60,220]);
       announceLevelUp(levelChange);
@@ -1251,8 +1267,13 @@
     function recordViewedCard(card) {
       viewedCount += 1;
       persistViewedCount();
+      if (gameState.lastCycleGoalDate !== dayKey) {
+        dailyGoalViewed += 1;
+        persistDailyGoalProgress();
+      }
       gameState.totalCards += 1;
       const levelChange = addXp(XP_PER_CARD);
+      completeDailyGoalIfNeeded(true);
       completeCycle(card);
       announceLevelUp(levelChange);
       checkAchievements();
@@ -1307,6 +1328,9 @@
       viewedCount = Number(safeStorageGet(DAILY_CARDS_PREFIX + dayKey) || 0);
       if (!Number.isFinite(viewedCount) || viewedCount < 0) viewedCount = 0;
       viewedCount = Math.floor(viewedCount);
+      dailyGoalViewed = Number(safeStorageGet(DAILY_GOAL_PROGRESS_PREFIX + dayKey) || 0);
+      if (!Number.isFinite(dailyGoalViewed) || dailyGoalViewed < 0) dailyGoalViewed = 0;
+      dailyGoalViewed = Math.floor(dailyGoalViewed);
       viewedCards = new WeakSet();
       updateGameHud();
     }
