@@ -191,6 +191,59 @@
     }
     .favorite.saved { background: rgba(255,255,255,.92); color: #111; }
 
+    .game-line { color: rgba(255,255,255,.98); font-weight: 850; }
+    .goal-line { color: rgba(255,255,255,.82); }
+    .goal-track {
+      display:block;
+      width:118px;
+      height:4px;
+      margin-top:2px;
+      overflow:hidden;
+      border-radius:999px;
+      background:rgba(255,255,255,.16);
+    }
+    .goal-fill {
+      display:block;
+      width:0%;
+      height:100%;
+      border-radius:inherit;
+      background:#fff;
+      transition:width .28s ease;
+    }
+
+    .reward-overlay {
+      position:fixed;
+      inset:0;
+      z-index:80;
+      display:grid;
+      place-items:center;
+      padding:24px;
+      background:rgba(0,0,0,.68);
+      opacity:0;
+      pointer-events:none;
+      transition:opacity .2s ease;
+      backdrop-filter:blur(10px);
+      -webkit-backdrop-filter:blur(10px);
+    }
+    .reward-overlay.open { opacity:1; pointer-events:auto; }
+    .reward-card {
+      width:min(360px,100%);
+      padding:28px 22px 22px;
+      border:1px solid rgba(255,255,255,.18);
+      border-radius:30px;
+      background:linear-gradient(180deg,#222,#111);
+      box-shadow:0 30px 100px rgba(0,0,0,.58), 0 0 70px rgba(255,255,255,.08);
+      text-align:center;
+      transform:scale(.88) translateY(16px);
+      transition:transform .24s cubic-bezier(.2,.9,.2,1);
+    }
+    .reward-overlay.open .reward-card { transform:scale(1) translateY(0); }
+    .reward-emoji { font-size:58px; line-height:1; margin-bottom:14px; animation:rewardPop .55s cubic-bezier(.2,.9,.2,1); }
+    .reward-title { font-size:26px; line-height:1.06; font-weight:850; letter-spacing:-.035em; }
+    .reward-text { margin:10px auto 20px; max-width:290px; color:rgba(255,255,255,.72); font-size:14px; line-height:1.4; }
+    .reward-button { width:100%; border:0; border-radius:17px; padding:14px 16px; background:#fff; color:#111; font-weight:850; cursor:pointer; }
+    @keyframes rewardPop { 0%{transform:scale(.5) rotate(-8deg)} 70%{transform:scale(1.12) rotate(3deg)} 100%{transform:scale(1) rotate(0)} }
+
     .toast {
       position: fixed;
       left: 50%;
@@ -304,6 +357,15 @@
   </aside>
 
   <div id="toast" class="toast">Сохранено</div>
+
+  <div class="reward-overlay" id="rewardOverlay" role="dialog" aria-modal="true" aria-labelledby="rewardTitle">
+    <div class="reward-card">
+      <div class="reward-emoji" id="rewardEmoji">🏆</div>
+      <div class="reward-title" id="rewardTitle">Достижение</div>
+      <div class="reward-text" id="rewardText"></div>
+      <button class="reward-button" id="rewardClose" type="button">Продолжить</button>
+    </div>
+  </div>
 
   <script>
     const THEMES = {
@@ -988,6 +1050,13 @@
     // A session also ends after 30 seconds without interaction, even if the tab stays focused.
     const DAILY_TIME_PREFIX = 'affirm_daily_time_v1:';
     const DAILY_CARDS_PREFIX = 'affirm_daily_cards_v1:';
+    const GAME_STATE_KEY = 'affirm_game_state_v1';
+    const HAPTICS_KEY = 'affirm_haptics_v1';
+    const DAILY_GOAL_CARDS = 30;
+    const XP_PER_CARD = 1;
+    const XP_DAILY_GOAL = 20;
+    const XP_FULL_CYCLE = 100;
+    const XP_PER_LEVEL = 250;
     const IDLE_TIMEOUT_MS = 30_000;
 
     function localDateKey() {
@@ -1010,6 +1079,176 @@
     viewedCount = Math.floor(viewedCount);
     let viewedCards = new WeakSet();
     let lastDailyPersist = 0;
+
+    const rewardOverlay = document.getElementById('rewardOverlay');
+    const rewardEmoji = document.getElementById('rewardEmoji');
+    const rewardTitle = document.getElementById('rewardTitle');
+    const rewardText = document.getElementById('rewardText');
+    const rewardClose = document.getElementById('rewardClose');
+    const rewardQueue = [];
+    let rewardShowing = false;
+
+    function normalizeGameState(value) {
+      const src = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+      return {
+        totalXp: Math.max(0, Math.floor(Number(src.totalXp) || 0)),
+        totalCards: Math.max(0, Math.floor(Number(src.totalCards) || 0)),
+        streak: Math.max(0, Math.floor(Number(src.streak) || 0)),
+        lastGoalDate: typeof src.lastGoalDate === 'string' ? src.lastGoalDate : '',
+        cycles: Math.max(0, Math.floor(Number(src.cycles) || 0)),
+        achievements: Array.isArray(src.achievements) ? [...new Set(src.achievements.filter(x => typeof x === 'string'))] : []
+      };
+    }
+
+    const hadGameState = safeStorageGet(GAME_STATE_KEY) !== null;
+    let gameState = normalizeGameState(readStoredJson(GAME_STATE_KEY, {}));
+    if (!hadGameState) {
+      // Give the new system credit for cards already viewed today before this feature existed.
+      gameState.totalCards = viewedCount;
+      gameState.totalXp = viewedCount * XP_PER_CARD;
+    }
+
+    function saveGameState() {
+      safeStorageSet(GAME_STATE_KEY, JSON.stringify(gameState));
+    }
+
+    function hapticsEnabled() {
+      const value = safeStorageGet(HAPTICS_KEY);
+      return value === null || (value !== '0' && value !== 'false');
+    }
+
+    function haptic(pattern) {
+      if (!hapticsEnabled() || !navigator.vibrate) return;
+      try { navigator.vibrate(pattern); } catch {}
+    }
+
+    function gameLevel() {
+      return Math.floor(gameState.totalXp / XP_PER_LEVEL) + 1;
+    }
+
+    function previousDateKey(key) {
+      const [y,m,d] = key.split('-').map(Number);
+      const date = new Date(y, m - 1, d, 12, 0, 0);
+      date.setDate(date.getDate() - 1);
+      const yy = date.getFullYear();
+      const mm = String(date.getMonth() + 1).padStart(2, '0');
+      const dd = String(date.getDate()).padStart(2, '0');
+      return `${yy}-${mm}-${dd}`;
+    }
+
+    function visibleStreak() {
+      if (!gameState.lastGoalDate) return 0;
+      if (gameState.lastGoalDate === dayKey || gameState.lastGoalDate === previousDateKey(dayKey)) return gameState.streak;
+      return 0;
+    }
+
+    function updateGameHud() {
+      const level = gameLevel();
+      const progress = Math.min(100, Math.max(0, viewedCount / DAILY_GOAL_CARDS * 100));
+      document.querySelectorAll('.streak-count').forEach(el => el.textContent = visibleStreak());
+      document.querySelectorAll('.xp-count').forEach(el => el.textContent = gameState.totalXp);
+      document.querySelectorAll('.level-count').forEach(el => el.textContent = level);
+      document.querySelectorAll('.goal-progress').forEach(el => el.textContent = `${Math.min(viewedCount, DAILY_GOAL_CARDS)} / ${DAILY_GOAL_CARDS}`);
+      document.querySelectorAll('.goal-fill').forEach(el => el.style.width = `${progress}%`);
+    }
+
+    function presentNextReward() {
+      if (rewardShowing || !rewardQueue.length) return;
+      const reward = rewardQueue.shift();
+      rewardShowing = true;
+      rewardEmoji.textContent = reward.emoji;
+      rewardTitle.textContent = reward.title;
+      rewardText.textContent = reward.text;
+      rewardOverlay.classList.add('open');
+      haptic(reward.pattern || 50);
+    }
+
+    function showReward(emoji, title, text, pattern) {
+      rewardQueue.push({ emoji, title, text, pattern });
+      presentNextReward();
+    }
+
+    function closeReward() {
+      if (!rewardShowing) return;
+      rewardOverlay.classList.remove('open');
+      rewardShowing = false;
+      setTimeout(presentNextReward, 180);
+    }
+
+    rewardClose.addEventListener('click', closeReward);
+    rewardOverlay.addEventListener('click', (e) => { if (e.target === rewardOverlay) closeReward(); });
+
+    function addXp(amount) {
+      const oldLevel = gameLevel();
+      gameState.totalXp += Math.max(0, Math.floor(amount));
+      saveGameState();
+      updateGameHud();
+      return { oldLevel, newLevel: gameLevel() };
+    }
+
+    function announceLevelUp(change) {
+      if (change.newLevel <= change.oldLevel) return;
+      showReward('⭐', `Уровень ${change.newLevel}`, `У тебя уже ${gameState.totalXp} XP.`, [80,50,120]);
+    }
+
+    function unlockAchievement(id, emoji, title, text) {
+      if (gameState.achievements.includes(id)) return false;
+      gameState.achievements.push(id);
+      saveGameState();
+      showReward(emoji, title, text, [100,50,100,50,180]);
+      return true;
+    }
+
+    function checkAchievements() {
+      if (gameState.totalCards >= 100) unlockAchievement('cards100', '💯', '100 карт', 'Первая сотня прочитанных аффирмаций.');
+      if (gameState.totalCards >= 500) unlockAchievement('cards500', '🏅', '500 карт', 'Уже 500 прочитанных карт.');
+      if (gameState.totalCards >= 1000) unlockAchievement('cards1000', '🏆', '1000 карт', 'Ты прочитал 1000 карт.');
+      if (gameState.streak >= 7) unlockAchievement('streak7', '🔥', '7 дней подряд', 'Неделя с выполненной дневной целью.');
+      if (gameState.streak >= 30) unlockAchievement('streak30', '🔥', '30 дней подряд', 'Месяц стабильной практики.');
+      if (gameState.cycles >= 1) unlockAchievement('cycle1', '🔄', 'Первый полный круг', 'Ты прошёл всю активную колоду.');
+      if (gameState.cycles >= 10) unlockAchievement('cycle10', '👑', '10 полных кругов', 'Десять полных проходов по колоде.');
+      if (gameLevel() >= 5) unlockAchievement('level5', '⭐', '5 уровень', 'Ты достиг 5 уровня.');
+      if (gameLevel() >= 10) unlockAchievement('level10', '🌟', '10 уровень', 'Ты достиг 10 уровня.');
+    }
+
+    function completeDailyGoalIfNeeded(showCelebration = true) {
+      if (viewedCount < DAILY_GOAL_CARDS || gameState.lastGoalDate === dayKey) return;
+      const yesterday = previousDateKey(dayKey);
+      gameState.streak = gameState.lastGoalDate === yesterday ? gameState.streak + 1 : 1;
+      gameState.lastGoalDate = dayKey;
+      saveGameState();
+      const levelChange = addXp(XP_DAILY_GOAL);
+      if (showCelebration) {
+        showReward('🎯', 'Цель дня выполнена!', `${DAILY_GOAL_CARDS} карт · +${XP_DAILY_GOAL} XP · 🔥 ${gameState.streak} дн.`, [60,40,60]);
+      }
+      announceLevelUp(levelChange);
+      checkAchievements();
+    }
+
+    function completeCycle(card) {
+      if (!card || card.dataset.cycleRemaining !== '0' || card.dataset.cycleAwarded === '1') return;
+      card.dataset.cycleAwarded = '1';
+      gameState.cycles += 1;
+      saveGameState();
+      const levelChange = addXp(XP_FULL_CYCLE);
+      showReward('🔄', 'Полный круг!', `Вся колода пройдена · +${XP_FULL_CYCLE} XP`, [120,60,120,60,220]);
+      announceLevelUp(levelChange);
+      checkAchievements();
+    }
+
+    function recordViewedCard(card) {
+      viewedCount += 1;
+      persistViewedCount();
+      gameState.totalCards += 1;
+      const levelChange = addXp(XP_PER_CARD);
+      completeDailyGoalIfNeeded(true);
+      completeCycle(card);
+      announceLevelUp(levelChange);
+      checkAchievements();
+      updateSessionStats();
+    }
+
+    saveGameState();
 
     function formatTime(ms) {
       const totalSeconds = Math.floor(ms / 1000);
@@ -1058,6 +1297,7 @@
       if (!Number.isFinite(viewedCount) || viewedCount < 0) viewedCount = 0;
       viewedCount = Math.floor(viewedCount);
       viewedCards = new WeakSet();
+      updateGameHud();
     }
 
     function updateSessionStats() {
@@ -1068,6 +1308,7 @@
       document.querySelectorAll('.session-timer').forEach(el => el.textContent = sessionTime);
       document.querySelectorAll('.day-timer').forEach(el => el.textContent = dayTime);
       document.querySelectorAll('.view-count').forEach(el => el.textContent = viewedCount);
+      updateGameHud();
       if (sessionRunning && now - lastDailyPersist > 2000) {
         persistDay(currentDayElapsedMs(now));
         lastDailyPersist = now;
@@ -1244,6 +1485,7 @@
       const card = document.createElement('section');
       card.className = 'card';
       card.dataset.id = item.id;
+      card.dataset.cycleRemaining = String(item.cycleRemaining ?? '');
       const savedClass = saved.has(item.id) ? ' saved' : '';
       card.innerHTML = `
         <div class="bg" style="background-image:url('${imageFor(item,index)}')"></div>
@@ -1254,6 +1496,9 @@
             <span class="stat-line">сессия <span class="session-timer">00:00</span></span>
             <span class="stat-line">сегодня <span class="day-timer">00:00</span> · <span class="view-count">0</span> карт.</span>
             <span class="stat-line">до нового круга <span class="cycle-remaining">${item.cycleRemaining}</span></span>
+            <span class="stat-line game-line">🔥 <span class="streak-count">0</span> · ⭐ <span class="xp-count">0</span> XP · ур. <span class="level-count">1</span></span>
+            <span class="stat-line goal-line">цель <span class="goal-progress">0 / 30</span></span>
+            <span class="goal-track"><span class="goal-fill"></span></span>
           </div>
           <div class="top-actions">
             <a class="icon-btn settings-link" href="settings.html" aria-label="Настройки">⚙</a>
@@ -1358,9 +1603,7 @@
             initialHintVisible = false;
             if (!viewedCards.has(entry.target)) {
               viewedCards.add(entry.target);
-              viewedCount += 1;
-              persistViewedCount();
-              updateSessionStats();
+              recordViewedCard(entry.target);
             }
             const idx = [...feed.children].indexOf(entry.target);
             if (feed.children.length - idx < 5) appendCards(10);
@@ -1396,6 +1639,9 @@
     deck = shuffle(AFFIRMATIONS);
     appendCards(14);
     renderSaved();
+    completeDailyGoalIfNeeded(true);
+    checkAchievements();
+    updateGameHud();
   </script>
 </body>
 </html>

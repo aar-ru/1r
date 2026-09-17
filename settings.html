@@ -66,6 +66,16 @@
     .notice { display:none; margin-top:10px; padding:11px 12px; border-radius:14px; background:#202020; color:#ddd; font-size:13px; }
     .notice.show { display:block; }
     .loading { padding:36px 0; text-align:center; color:var(--muted); }
+    .setting-row { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+    .setting-copy { min-width:0; }
+    .setting-title { font-size:15px; font-weight:800; margin-bottom:4px; }
+    .setting-help { color:var(--muted); font-size:12px; line-height:1.4; }
+    .switch { position:relative; width:52px; height:30px; flex:0 0 52px; }
+    .switch input { position:absolute; opacity:0; pointer-events:none; }
+    .switch-track { position:absolute; inset:0; border-radius:999px; background:#2c2c2c; border:1px solid var(--line); transition:.2s ease; }
+    .switch-track::after { content:""; position:absolute; top:3px; left:3px; width:22px; height:22px; border-radius:50%; background:#fff; transition:.2s ease; }
+    .switch input:checked + .switch-track { background:#fff; }
+    .switch input:checked + .switch-track::after { transform:translateX(22px); background:#111; }
   </style>
 </head>
 <body>
@@ -77,6 +87,21 @@
         <div class="subtitle">Управление аффирмациями на этом устройстве</div>
       </div>
     </header>
+
+    <section class="card">
+      <h2>Игровые механики</h2>
+      <div class="setting-row">
+        <div class="setting-copy">
+          <div class="setting-title">Тактильные эффекты</div>
+          <div class="setting-help">Вибрация на дневной цели, новом уровне, достижениях и полном круге. На iPhone браузер может не поддерживать вибрацию.</div>
+        </div>
+        <label class="switch" aria-label="Тактильные эффекты">
+          <input id="hapticsToggle" type="checkbox" />
+          <span class="switch-track"></span>
+        </label>
+      </div>
+      <div class="setting-help" style="margin-top:14px">Дневная цель: 30 карт · +1 XP за карту · +20 XP за цель · +100 XP за полный круг.</div>
+    </section>
 
     <section class="card">
       <h2>Добавить аффирмацию</h2>
@@ -138,6 +163,7 @@
     const DELETED_KEY = 'affirm_deleted_v1';
     const EDITED_KEY = 'affirm_edits_v1';
     const SAVED_KEY = 'affirm_strong500_saved_v2';
+    const HAPTICS_KEY = 'affirm_haptics_v1';
 
     const THEME_LABELS = {
       self:'Я-концепция', decisions:'Решения и уверенность', luck:'Удача и реальность',
@@ -158,6 +184,13 @@
     const editBackdrop = document.getElementById('editBackdrop');
     const editText = document.getElementById('editText');
     const editTheme = document.getElementById('editTheme');
+    const hapticsToggle = document.getElementById('hapticsToggle');
+    const storedHaptics = localStorage.getItem(HAPTICS_KEY);
+    hapticsToggle.checked = storedHaptics === null || (storedHaptics !== '0' && storedHaptics !== 'false');
+    hapticsToggle.addEventListener('change', () => {
+      localStorage.setItem(HAPTICS_KEY, hapticsToggle.checked ? '1' : '0');
+      if (hapticsToggle.checked && navigator.vibrate) { try { navigator.vibrate(40); } catch {} }
+    });
     let base = [];
     let editingItem = null;
 
