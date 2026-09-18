@@ -16,7 +16,7 @@
   let intervals = [], lastFlush = Date.now(), timerBusy = false;
   const counted = new WeakMap(), rewards = [];
   let rewardShowing = false, summaryRoundId = null;
-  let wheelTotal=0, wheelLatched=false, wheelTimer, navigationUntil=0;
+  let wheelTotal=0, wheelLatched=false, wheelTimer, touchStart=null, touchPaged=false;
   const MAX_CARDS = 60;
   drawer.hidden = progressDrawer.hidden = backdrop.hidden = rewardOverlay.hidden = true;
   drawer.setAttribute('role','dialog'); drawer.setAttribute('aria-modal','true');
@@ -294,12 +294,29 @@
     return text && text.scrollHeight>text.clientHeight+1 &&
       (direction<0 ? text.scrollTop>0 : text.scrollTop+text.clientHeight<text.scrollHeight-1);
   }
-  function navigate(direction) {
-    if(Date.now()<navigationUntil) return;
+  function navigate(direction, align=false) {
     if(state.round?.complete && direction>0) {presentReward();return;}
-    navigationUntil=Date.now()+380;
-    feed.scrollBy({top:feed.clientHeight*direction,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+    if(align) {
+      const page=Math.round(feed.scrollTop/feed.clientHeight);
+      feed.scrollTo({top:Math.max(0,(page+direction)*feed.clientHeight),behavior:'auto'});
+    } else feed.scrollBy({top:feed.clientHeight*direction,behavior:'auto'});
   }
+  feed.addEventListener('touchstart',e=>{
+    if(e.touches.length!==1 || e.target.closest('button,a,input,textarea,select,[contenteditable="true"]')) {
+      touchStart=null; return;
+    }
+    const touch=e.touches[0];
+    touchStart={x:touch.clientX,y:touch.clientY,target:e.target}; touchPaged=false;
+  },{passive:true});
+  feed.addEventListener('touchmove',e=>{
+    if(!touchStart || touchPaged || e.touches.length!==1) return;
+    const touch=e.touches[0], dx=touch.clientX-touchStart.x, dy=touchStart.y-touch.clientY;
+    if(Math.abs(dy)<24 || Math.abs(dy)<=Math.abs(dx)) return;
+    const direction=Math.sign(dy);
+    if(canScrollText(touchStart.target,direction)) { touchStart=null; return; }
+    e.preventDefault(); touchPaged=true; activity(); navigate(direction,true);
+  },{passive:false});
+  for(const event of ['touchend','touchcancel']) feed.addEventListener(event,()=>{touchStart=null;touchPaged=false;},{passive:true});
   feed.addEventListener('wheel',e=>{
     if(e.ctrlKey || e.metaKey || !e.deltaY || Math.abs(e.deltaX)>Math.abs(e.deltaY)) return;
     const direction=Math.sign(e.deltaY);
