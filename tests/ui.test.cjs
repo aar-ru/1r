@@ -10,13 +10,23 @@ const wait=async predicate=>{for(let n=0;n<200;n++){if(await predicate())return;
 class Assets extends ResourceLoader {
   fetch(url){const pathname=new URL(url).pathname;return pathname.startsWith('/assets/')?Promise.resolve(fs.readFileSync(path.join(project,pathname))):null;}
 }
-function setup(page='index.html',{idb=new IDBFactory(),denyStorage=false,channelHub=[]}={}){
+function setup(page='index.html',{idb=new IDBFactory(),denyStorage=false,channelHub=[],manualImages=false,reducedMotion=false}={}){
   const errors=[];
   const vc=new VirtualConsole();vc.on('jsdomError',error=>errors.push(error));
   const dom=new JSDOM(fs.readFileSync(path.join(project,page),'utf8'),{
     url:`https://affirm.test/${page}`,runScripts:'dangerously',resources:new Assets(),pretendToBeVisual:true,virtualConsole:vc,
     beforeParse(w){
-      w.indexedDB=idb;w.structuredClone=structuredClone;w.matchMedia=()=>({matches:false});
+      w.indexedDB=idb;w.structuredClone=structuredClone;w.matchMedia=()=>({matches:reducedMotion});
+      let clock=0,frameId=0;const frames=new Map();
+      w.performance.now=()=>clock;
+      w.requestAnimationFrame=fn=>{frames.set(++frameId,fn);return frameId;};
+      w.cancelAnimationFrame=id=>frames.delete(id);
+      w.stepFrame=ms=>{clock+=ms;const pending=[...frames.values()];frames.clear();pending.forEach(fn=>fn(clock));};
+      w.pendingImages=[];
+      w.HTMLImageElement.prototype.decode=function(){
+        if(!manualImages) return Promise.resolve();
+        return new Promise((resolve,reject)=>w.pendingImages.push({image:this,resolve,reject}));
+      };
       if(idb) {
         const open=idb.open.bind(idb);let latestDatabase;
         idb.open=(...args)=>{
@@ -85,14 +95,21 @@ test('empty deck offers settings, never resurrecting a deleted affirmation',asyn
   assert.equal(e.w.document.querySelectorAll('.card').length,0);assert.match(e.w.document.querySelector('#feed').textContent,/пока нет/);
   assert.equal(e.w.document.querySelector('#feed a').getAttribute('href'),'settings.html');
 });
-test('space on a button is not hijacked; keyboard paging uses the feed height',async t=>{
+test('space on a button is not hijacked; every keyboard page animates within 100ms',async t=>{
   const e=setup();t.after(()=>e.w.close());await loaded(e);
   const feed=e.w.document.getElementById('feed');Object.defineProperty(feed,'clientHeight',{value:800});
   const button=e.w.document.querySelector('.favorite');
   const space=new e.w.KeyboardEvent('keydown',{key:' ',bubbles:true,cancelable:true});button.dispatchEvent(space);
-  assert.equal(space.defaultPrevented,false);assert.equal(feed.lastScroll,undefined);
+  assert.equal(space.defaultPrevented,false);assert.equal(feed.scrollTop,0);
   feed.dispatchEvent(new e.w.KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true,cancelable:true}));
-  assert.equal(feed.lastScroll.top,800);
+  assert.equal(feed.scrollTop,0);
+  e.w.stepFrame(50);assert.ok(feed.scrollTop>0 && feed.scrollTop<800);
+  e.w.stepFrame(50);assert.equal(feed.scrollTop,800);
+  feed.dispatchEvent(new e.w.KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true,cancelable:true}));
+  e.w.stepFrame(50);assert.ok(feed.scrollTop>800 && feed.scrollTop<1600);
+  e.w.stepFrame(50);assert.equal(feed.scrollTop,1600);
+  assert.equal(feed.style.scrollSnapType,'');
+  await wait(async()=>(await e.w.AffirmStore.read()).round.resumeId===feed.children[2].dataset.id);
 });
 test('settings reject duplicates, preserve custom deletions for restore and save edits',async t=>{
   const e=setup('settings.html');t.after(()=>e.w.close());await loaded(e,'settings.html');
@@ -177,10 +194,9 @@ test('wheel inertia pages once, while zoom and scrolling long text stay native',
   const e=setup();t.after(()=>e.w.close());await loaded(e);
   const feed=e.w.document.getElementById('feed'),text=e.w.document.querySelector('.text');
   Object.defineProperty(feed,'clientHeight',{value:600});
-  const movements=[];feed.scrollBy=options=>movements.push(options.top);
   const wheel=(target,options)=>{const event=new e.w.WheelEvent('wheel',{deltaY:180,bubbles:true,cancelable:true,...options});target.dispatchEvent(event);return event;};
   for(let i=0;i<12;i++)assert.equal(wheel(feed).defaultPrevented,true);
-  assert.deepEqual(movements,[600]);
+  e.w.stepFrame(100);assert.equal(feed.scrollTop,600);
   assert.equal(wheel(feed,{ctrlKey:true}).defaultPrevented,false);
   assert.equal(wheel(feed,{deltaX:300}).defaultPrevented,false);
   Object.defineProperty(text,'clientHeight',{value:150});Object.defineProperty(text,'scrollHeight',{value:500});
@@ -189,38 +205,103 @@ test('wheel inertia pages once, while zoom and scrolling long text stay native',
   assert.equal(down.defaultPrevented,false);
   await new Promise(r=>setTimeout(r,410));
   text.scrollTop=350;assert.equal(wheel(text).defaultPrevented,true);
-  assert.deepEqual(movements,[600,600]);
+  e.w.stepFrame(100);assert.equal(feed.scrollTop,1200);
   await new Promise(r=>setTimeout(r,410));
   assert.equal(wheel(feed,{deltaY:-3,deltaMode:1}).defaultPrevented,true);
-  assert.deepEqual(movements,[600,600,-600]);
+  e.w.stepFrame(100);assert.equal(feed.scrollTop,600);
 });
-test('a short vertical swipe pages instantly once and leaves long text scrolling native',async t=>{
+test('the whole swipe is captured, small drags do not page, and long text stays native',async t=>{
   const e=setup();t.after(()=>e.w.close());await loaded(e);
   const feed=e.w.document.getElementById('feed'),text=e.w.document.querySelector('.text');
   Object.defineProperty(feed,'clientHeight',{value:600});
-  const movements=[];feed.scrollTo=options=>movements.push(options);
   const touch=(type,target,x,y)=>{
     const event=new e.w.Event(type,{bubbles:true,cancelable:true});
     Object.defineProperty(event,'touches',{value:type==='touchend'?[]:[{clientX:x,clientY:y}]});
     target.dispatchEvent(event);return event;
   };
   touch('touchstart',feed,100,500);
+  assert.equal(touch('touchmove',feed,101,495).defaultPrevented,true);
+  e.w.stepFrame(100);assert.equal(feed.scrollTop,0);
   const move=touch('touchmove',feed,102,470);
   assert.equal(move.defaultPrevented,true);
-  assert.equal(movements.length,1);assert.equal(movements[0].top,600);assert.equal(movements[0].behavior,'auto');
-  touch('touchmove',feed,102,380);
-  assert.equal(movements.length,1);
-  touch('touchend',feed,102,380);
+  e.w.stepFrame(40);assert.ok(feed.scrollTop>0 && feed.scrollTop<600);
+  assert.equal(touch('touchmove',feed,102,380).defaultPrevented,true);
+  e.w.stepFrame(60);assert.equal(feed.scrollTop,600);
+  assert.equal(touch('touchmove',feed,102,250).defaultPrevented,true);
+  assert.equal(touch('touchend',feed,102,250).defaultPrevented,true);
+  e.w.stepFrame(100);assert.equal(feed.scrollTop,600);
   touch('touchstart',feed,100,500);touch('touchmove',feed,130,485);touch('touchend',feed,130,485);
-  assert.equal(movements.length,1);
+  e.w.stepFrame(100);assert.equal(feed.scrollTop,600);
   Object.defineProperty(text,'clientHeight',{value:150});Object.defineProperty(text,'scrollHeight',{value:500});
   touch('touchstart',text,100,500);
   const textMove=touch('touchmove',text,100,450);
-  assert.equal(textMove.defaultPrevented,false);assert.equal(movements.length,1);
+  assert.equal(textMove.defaultPrevented,false);assert.equal(feed.scrollTop,600);
   text.scrollTop=350;
   touch('touchstart',text,100,500);
   assert.equal(touch('touchmove',text,100,450).defaultPrevented,true);
-  assert.equal(movements.at(-1).top,600);assert.equal(movements.at(-1).behavior,'auto');
+  e.w.stepFrame(100);assert.equal(feed.scrollTop,1200);
+  touch('touchend',text,100,450);
+  touch('touchstart',feed,100,400);touch('touchmove',feed,100,435);
+  e.w.stepFrame(100);assert.equal(feed.scrollTop,600);
+  await wait(async()=>(await e.w.AffirmStore.read()).round.resumeId===feed.children[1].dataset.id);
+});
+test('two-finger zoom, buttons, cancelled and non-cancelable gestures never trigger custom paging',async t=>{
+  const e=setup();t.after(()=>e.w.close());await loaded(e);
+  const feed=e.w.document.getElementById('feed'),button=feed.querySelector('.favorite');
+  Object.defineProperty(feed,'clientHeight',{value:600});
+  const touch=(type,target,ys,cancelable=true)=>{
+    const event=new e.w.Event(type,{bubbles:true,cancelable});
+    Object.defineProperty(event,'touches',{value:ys.map(y=>({clientX:100,clientY:y}))});
+    target.dispatchEvent(event);return event;
+  };
+  touch('touchstart',button,[500]);assert.equal(touch('touchmove',button,[400]).defaultPrevented,false);
+  touch('touchstart',feed,[500]);touch('touchstart',feed,[500,600]);
+  assert.equal(touch('touchmove',feed,[400,700]).defaultPrevented,false);
+  touch('touchend',feed,[400]);assert.equal(touch('touchmove',feed,[300]).defaultPrevented,false);
+  touch('touchstart',feed,[500]);touch('touchcancel',feed,[]);
+  assert.equal(touch('touchmove',feed,[400]).defaultPrevented,false);
+  touch('touchstart',feed,[500]);touch('touchmove',feed,[400],false);
+  assert.equal(touch('touchmove',feed,[300]).defaultPrevented,false);
+  e.w.stepFrame(100);assert.equal(feed.scrollTop,0);
+});
+test('rapid inputs finish each page, and reduced-motion paging remains immediate',async t=>{
+  const e=setup();t.after(()=>e.w.close());await loaded(e);
+  const feed=e.w.document.getElementById('feed');Object.defineProperty(feed,'clientHeight',{value:600});
+  const down=()=>feed.dispatchEvent(new e.w.KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true,cancelable:true}));
+  down();e.w.stepFrame(20);down();
+  e.w.stepFrame(80);assert.equal(feed.scrollTop,600);
+  e.w.stepFrame(50);assert.ok(feed.scrollTop>600 && feed.scrollTop<1200);
+  e.w.stepFrame(50);assert.equal(feed.scrollTop,1200);
+  await wait(async()=>(await e.w.AffirmStore.read()).round.resumeId===feed.children[2].dataset.id);
+  const reduced=setup('index.html',{reducedMotion:true});t.after(()=>reduced.w.close());await loaded(reduced);
+  const rf=reduced.w.document.getElementById('feed');Object.defineProperty(rf,'clientHeight',{value:600});
+  rf.dispatchEvent(new reduced.w.KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true,cancelable:true}));
+  assert.equal(rf.scrollTop,600);assert.equal(rf.style.scrollSnapType,'');
+  await wait(async()=>(await reduced.w.AffirmStore.read()).round.resumeId===rf.children[1].dataset.id);
+});
+test('decoded backgrounds are prefetched and slow, failed or stale images cannot blank the feed',async t=>{
+  const e=setup('index.html',{manualImages:true});t.after(()=>e.w.close());await loaded(e);
+  const feed=e.w.document.getElementById('feed'),bg=e.w.document.getElementById('background');
+  await e.w.AffirmStore.transaction(s=>{
+    s.deleted=e.w.AffirmCatalog.items.map(x=>x.id);
+    s.custom=[1,2,3,4].map(n=>({id:`c-${n}`,theme:'self',text:`Карточка ${n}`}));
+    Core.ensureRound(s,e.w.AffirmCatalog,()=>.99);
+  });
+  const cards=[...feed.children];Object.defineProperty(feed,'clientHeight',{value:600});
+  const current=e.w.pendingImages.find(p=>p.image.src===cards[0].dataset.image);
+  assert.ok(e.w.pendingImages.some(p=>p.image.src===cards[1].dataset.image));
+  assert.equal(bg.querySelector('img'),null);
+  current.resolve();await wait(()=>bg.lastElementChild===current.image);
+  feed.dispatchEvent(new e.w.KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true,cancelable:true}));
+  e.w.stepFrame(100);assert.equal(feed.scrollTop,600);assert.equal(bg.lastElementChild,current.image);
+  const slow=e.w.pendingImages.find(p=>p.image.src===cards[1].dataset.image);
+  feed.dispatchEvent(new e.w.KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true,cancelable:true}));
+  e.w.stepFrame(100);assert.equal(feed.scrollTop,1200);
+  slow.resolve();await new Promise(r=>setImmediate(r));assert.equal(bg.lastElementChild,current.image);
+  const failed=e.w.pendingImages.find(p=>p.image.src===cards[2].dataset.image);
+  failed.reject(Error('Offline'));await new Promise(r=>setImmediate(r));assert.equal(bg.lastElementChild,current.image);
+  await wait(async()=>(await e.w.AffirmStore.read()).round.resumeId===cards[2].dataset.id);
+  assert.deepEqual(e.errors,[]);
 });
 test('cards skipped by a fast jump return after the last card and complete the round once',async t=>{
   const e=setup();t.after(()=>e.w.close());await loaded(e);

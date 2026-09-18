@@ -2,6 +2,7 @@
   'use strict';
   const Core = window.AffirmState, Store = window.AffirmStore, Catalog = window.AffirmCatalog;
   const feed = document.getElementById('feed');
+  const background = document.getElementById('background');
   const drawer = document.getElementById('drawer');
   const progressDrawer = document.getElementById('progressDrawer');
   const topbar = document.getElementById('topbar');
@@ -16,7 +17,9 @@
   let intervals = [], lastFlush = Date.now(), timerBusy = false;
   const counted = new WeakMap(), rewards = [];
   let rewardShowing = false, summaryRoundId = null;
-  let wheelTotal=0, wheelLatched=false, wheelTimer, touchStart=null, touchPaged=false;
+  let wheelTotal=0, wheelLatched=false, wheelTimer, touchStart=null;
+  let paging=null, queuedDirection=0, wantedBackground=null, backgroundAnimation;
+  const images = new Map(), PAGE_MS = 100;
   const MAX_CARDS = 60;
   drawer.hidden = progressDrawer.hidden = backdrop.hidden = rewardOverlay.hidden = true;
   drawer.setAttribute('role','dialog'); drawer.setAttribute('aria-modal','true');
@@ -30,6 +33,50 @@
     const images=Catalog.themes[item.theme].images;
     const number=Number(item.id.replace(/\D/g,'')) || 0;
     return images[number % images.length];
+  }
+  function preloadImage(url, priority='low') {
+    let entry=images.get(url);
+    if(entry) {
+      images.delete(url); images.set(url,entry);
+      if(priority==='high') entry.image.fetchPriority='high';
+      return entry;
+    }
+    const image=new Image(); image.alt=''; image.decoding='async'; image.fetchPriority=priority;
+    entry={image,ready:false}; images.set(url,entry);
+    const loaded=new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=reject;});
+    // decode() prepares the actual node that will be displayed, not a CSS URL alone.
+    image.src=url;
+    entry.done=(typeof image.decode==='function' ? image.decode() : loaded).then(()=>{
+      entry.ready=true; return true;
+    }).catch(()=>false);
+    loaded.catch(()=>{});
+    for(const [key,value] of images) {
+      if(images.size<=8) break;
+      if(key!==wantedBackground && !background.contains(value.image)) images.delete(key);
+    }
+    return entry;
+  }
+  function showBackground(card) {
+    const url=card?.dataset.image;
+    if(!url) { wantedBackground=null; backgroundAnimation?.cancel(); background.replaceChildren(); return; }
+    wantedBackground=url;
+    const entry=preloadImage(url,'high');
+    const display=()=>{
+      if(!entry.ready || wantedBackground!==url || !card.isConnected || background.lastElementChild===entry.image) return;
+      backgroundAnimation?.cancel();
+      const old=background.lastElementChild;
+      // A slow or failed download keeps the last photo. Paging never waits for it.
+      background.replaceChildren(...(old?[old,entry.image]:[entry.image]));
+      if(old && entry.image.animate && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        const animation=entry.image.animate([{opacity:0},{opacity:1}],{duration:PAGE_MS,easing:'linear'});
+        backgroundAnimation=animation;
+        animation.finished.then(()=>{if(background.lastElementChild===entry.image) old.remove();}).catch(()=>{});
+      } else if(old) old.remove();
+    };
+    if(entry.ready) display(); else entry.done.then(display);
+    const cards=[...feed.children], index=cards.indexOf(card);
+    for(const neighbor of cards.slice(index+1,index+4)) preloadImage(neighbor.dataset.image);
+    if(index>0) preloadImage(cards[index-1].dataset.image);
   }
   function time(ms) {
     const seconds=Math.floor(Math.max(0,ms)/1000);
@@ -102,10 +149,10 @@
     const card=document.createElement('section');
     card.className='card'; card.dataset.id=item.id; card.dataset.roundId=state.round.id; card.inert=true;
     // Only fixed application markup goes through innerHTML. All user strings use textContent.
-    card.innerHTML=`<div class="bg"></div><div class="overlay"></div>
+    card.innerHTML=`<div class="overlay"></div>
       <div class="content"><div class="topic"></div><p class="text" tabindex="0"></p></div>
       <button class="icon-btn favorite" aria-label="Сохранить" aria-pressed="false">♡</button>`;
-    card.querySelector('.bg').style.backgroundImage=`url('${imageFor(item)}')`;
+    card.dataset.image=imageFor(item);
     card.querySelector('.topic').textContent=Catalog.themes[item.theme].label;
     const text=card.querySelector('.text'); text.textContent=item.text;
     if(item.text.length>160) card.classList.add('long-text');
@@ -146,6 +193,7 @@
     }
   }
   function buildFeed() {
+    finishPaging(false); touchStart=null;
     building=true; observer.disconnect(); activeCard=null; feed.replaceChildren(); feed.scrollTop=0;
     plan=Core.preview(state,Catalog); planned=0;
     if(!Core.activeItems(state,Catalog).length) {
@@ -155,6 +203,7 @@
       empty.append(label,link); feed.appendChild(empty);
     } else if(plan.length) appendCards(14);
     else { building=false; prepare(); return; }
+    showBackground(feed.querySelector('.card'));
     building=false;
   }
   async function recordActive() {
@@ -175,18 +224,25 @@
     } catch(error) { intervals.unshift(...pending); message(error.message); }
     finally { viewPending=false; recoverSkipped(); if(activeCard!==card) recordActive(); }
   }
+  function activateCard(card) {
+    if(activeCard!==card) {
+      activeCard?.classList.remove('active');
+      if(activeCard) activeCard.inert=true;
+    }
+    activeCard=card; card.classList.add('active'); card.inert=false;
+    showBackground(card); updateHud(); recordActive();
+    const index=[...feed.children].indexOf(card);
+    if(feed.children.length-index<5) appendCards();
+    recoverSkipped();
+  }
   const observer=new IntersectionObserver(entries=>{
+    if(paging) return;
     for(const entry of entries) {
       if(!feed.contains(entry.target)) continue;
       const visible=entry.isIntersecting && entry.intersectionRatio>=.65;
       entry.target.classList.toggle('active',visible);
       entry.target.inert=!visible;
-      if(visible) {
-        activeCard=entry.target; updateHud(); recordActive();
-        const index=[...feed.children].indexOf(activeCard);
-        if(feed.children.length-index<5) appendCards();
-        recoverSkipped();
-      }
+      if(visible) activateCard(entry.target);
     }
   },{root:feed,threshold:[.65]});
   function renderSaved() {
@@ -203,6 +259,7 @@
     }
   }
   function openModal(modal) {
+    finishPaging(false); touchStart=null;
     previousFocus=document.activeElement;
     if(modal===drawer) renderSaved();
     if(modal!==rewardOverlay) { backdrop.hidden=false; backdrop.classList.add('open'); }
@@ -294,29 +351,64 @@
     return text && text.scrollHeight>text.clientHeight+1 &&
       (direction<0 ? text.scrollTop>0 : text.scrollTop+text.clientHeight<text.scrollHeight-1);
   }
-  function navigate(direction, align=false) {
+  function finishPaging(activate=true) {
+    if(!paging) { queuedDirection=0; return; }
+    const target=paging.target, next=queuedDirection;
+    cancelAnimationFrame(paging.frame); paging=null; queuedDirection=0;
+    if(target.isConnected) feed.scrollTop=[...feed.children].indexOf(target)*feed.clientHeight;
+    feed.style.scrollSnapType='';
+    if(activate && target.isConnected) {
+      activateCard(target);
+      if(next) navigate(next);
+    }
+  }
+  function navigate(direction) {
+    if(!state || feed.inert || !feed.clientHeight) return;
     if(state.round?.complete && direction>0) {presentReward();return;}
-    if(align) {
-      const page=Math.round(feed.scrollTop/feed.clientHeight);
-      feed.scrollTo({top:Math.max(0,(page+direction)*feed.clientHeight),behavior:'auto'});
-    } else feed.scrollBy({top:feed.clientHeight*direction,behavior:'auto'});
+    if(paging) { queuedDirection=direction; return; }
+    const cards=[...feed.querySelectorAll('.card')], page=Math.round(feed.scrollTop/feed.clientHeight);
+    const index=Math.max(0,Math.min(cards.length-1,page+direction)), target=cards[index];
+    if(!target || index===page) return;
+    const from=feed.scrollTop, to=index*feed.clientHeight, start=performance.now();
+    showBackground(target);
+    feed.style.scrollSnapType='none';
+    paging={target,frame:null};
+    if(matchMedia('(prefers-reduced-motion: reduce)').matches) { finishPaging(); return; }
+    const step=now=>{
+      const progress=Math.min(1,(now-start)/PAGE_MS);
+      feed.scrollTop=from+(to-from)*(1-Math.pow(1-progress,3));
+      if(progress<1) paging.frame=requestAnimationFrame(step); else finishPaging();
+    };
+    paging.frame=requestAnimationFrame(step);
   }
   feed.addEventListener('touchstart',e=>{
-    if(e.touches.length!==1 || e.target.closest('button,a,input,textarea,select,[contenteditable="true"]')) {
+    if(e.touches.length!==1 || feed.inert || window.visualViewport?.scale>1 || e.target.closest('button,a,input,textarea,select,[contenteditable="true"]')) {
       touchStart=null; return;
     }
     const touch=e.touches[0];
-    touchStart={x:touch.clientX,y:touch.clientY,target:e.target}; touchPaged=false;
+    touchStart={x:touch.clientX,y:touch.clientY,target:e.target,claimed:false,paged:false};
   },{passive:true});
   feed.addEventListener('touchmove',e=>{
-    if(!touchStart || touchPaged || e.touches.length!==1) return;
+    if(!touchStart) return;
+    if(e.touches.length!==1 || !e.cancelable) {touchStart=null;return;}
     const touch=e.touches[0], dx=touch.clientX-touchStart.x, dy=touchStart.y-touch.clientY;
-    if(Math.abs(dy)<24 || Math.abs(dy)<=Math.abs(dx)) return;
+    if(!dx && !dy) return;
     const direction=Math.sign(dy);
-    if(canScrollText(touchStart.target,direction)) { touchStart=null; return; }
-    e.preventDefault(); touchPaged=true; activity(); navigate(direction,true);
+    if(!touchStart.claimed) {
+      if(Math.abs(dx)>=Math.abs(dy) || canScrollText(touchStart.target,direction)) {touchStart=null;return;}
+      touchStart.claimed=true;
+    }
+    // Cancel every move, including the small first move and the tail after paging.
+    // Otherwise native inertia races the programmed transition on mobile Safari.
+    e.preventDefault();
+    if(!touchStart.paged && Math.abs(dy)>=24) {touchStart.paged=true;activity();navigate(direction);}
   },{passive:false});
-  for(const event of ['touchend','touchcancel']) feed.addEventListener(event,()=>{touchStart=null;touchPaged=false;},{passive:true});
+  feed.addEventListener('touchend',e=>{
+    if(touchStart?.claimed && e.cancelable) e.preventDefault();
+    touchStart=null;
+  },{passive:false});
+  feed.addEventListener('touchcancel',()=>{touchStart=null;},{passive:true});
+  window.addEventListener('resize',()=>finishPaging());
   feed.addEventListener('wheel',e=>{
     if(e.ctrlKey || e.metaKey || !e.deltaY || Math.abs(e.deltaX)>Math.abs(e.deltaY)) return;
     const direction=Math.sign(e.deltaY);
@@ -352,7 +444,7 @@
   }
   for(const event of ['pointerdown','touchstart','keydown']) document.addEventListener(event,activity,{passive:true});
   feed.addEventListener('scroll',activity,{passive:true});
-  function pause() { tick(); focused=false; flushTime(); }
+  function pause() { finishPaging(false); touchStart=null; tick(); focused=false; flushTime(); }
   async function resume() {
     focused=!document.hidden && document.hasFocus(); lastTick=lastActivity=Date.now(); sessionMs=0;
     try { applyState(await Store.read()); await prepare(); recordActive(); } catch(error) {message(error.message);}
