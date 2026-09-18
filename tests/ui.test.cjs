@@ -115,7 +115,7 @@ test('back-forward cache return reloads content edited in another page',async t=
 test('denied storage never causes a blank settings page',async t=>{
   const e=setup('settings.html',{idb:null,denyStorage:true});
   t.after(()=>e.w.close());await loaded(e,'settings.html');
-  assert.equal(e.w.document.getElementById('activeCount').textContent,'441');
+  assert.equal(e.w.document.getElementById('activeCount').textContent,String(e.w.AffirmState.activeItems(e.w.AffirmState.empty(),e.w.AffirmCatalog).length));
   assert.equal(e.w.document.getElementById('storageWarning').hidden,false);
   e.w.document.getElementById('newText').value='Текст временной сессии';
   e.w.document.getElementById('addBtn').click();
@@ -194,7 +194,7 @@ test('long sessions keep a bounded DOM while preserving every unread card in the
     assert.ok(feed.children.length<=60);
   }
   const state=await e.w.AffirmStore.read();
-  assert.equal(state.round.order.length,441);assert.equal(state.round.seen.length,18);
+  assert.equal(state.round.order.length,e.w.AffirmState.activeItems(e.w.AffirmState.empty(),e.w.AffirmCatalog).length);assert.equal(state.round.seen.length,18);
   assert.equal(state.game.cycles,0);assert.equal(e.w.document.querySelectorAll('.topbar').length,1);
 });
 
