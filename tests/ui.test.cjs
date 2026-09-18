@@ -111,6 +111,47 @@ test('space on a button is not hijacked; every keyboard page animates within 100
   assert.equal(feed.style.scrollSnapType,'');
   await wait(async()=>(await e.w.AffirmStore.read()).round.resumeId===feed.children[2].dataset.id);
 });
+test('clicking text or background advances one card; favorites and progress remain separate',async t=>{
+  const e=setup();t.after(()=>e.w.close());await loaded(e);
+  const d=e.w.document,feed=d.getElementById('feed');Object.defineProperty(feed,'clientHeight',{value:600});
+  feed.querySelector('.text').click();
+  e.w.stepFrame(50);assert.ok(feed.scrollTop>0 && feed.scrollTop<600);
+  e.w.stepFrame(50);assert.equal(feed.scrollTop,600);
+  await wait(async()=>(await e.w.AffirmStore.read()).round.resumeId===feed.children[1].dataset.id);
+  const favorite=feed.children[1].querySelector('.favorite');favorite.click();
+  await wait(()=>favorite.getAttribute('aria-pressed')==='true');
+  e.w.stepFrame(100);assert.equal(feed.scrollTop,600);
+  d.getElementById('openProgress').click();
+  assert.equal(d.getElementById('progressDrawer').hidden,false);
+  feed.children[1].click();e.w.stepFrame(100);assert.equal(feed.scrollTop,600);
+  d.getElementById('closeProgress').click();
+  feed.children[1].click();e.w.stepFrame(100);assert.equal(feed.scrollTop,1200);
+  await wait(async()=>(await e.w.AffirmStore.read()).round.resumeId===feed.children[2].dataset.id);
+});
+test('dragging, selection and a click after a swipe never cause an extra page; the next tap still works',async t=>{
+  const e=setup();t.after(()=>e.w.close());await loaded(e);
+  const d=e.w.document,feed=d.getElementById('feed'),text=feed.querySelector('.text');
+  Object.defineProperty(feed,'clientHeight',{value:600});
+  const pointer=(type,target,x,y)=>target.dispatchEvent(new e.w.MouseEvent(type,{bubbles:true,clientX:x,clientY:y}));
+  pointer('pointerdown',text,100,400);pointer('pointermove',text,100,360);pointer('pointerup',text,100,360);
+  text.click();e.w.stepFrame(100);assert.equal(feed.scrollTop,0);
+  const range=d.createRange();range.selectNodeContents(text);e.w.getSelection().addRange(range);
+  text.click();e.w.stepFrame(100);assert.equal(feed.scrollTop,0);e.w.getSelection().removeAllRanges();
+  const touch=(type,target,y)=>{
+    const event=new e.w.Event(type,{bubbles:true,cancelable:true});
+    Object.defineProperty(event,'touches',{value:type==='touchend'?[]:[{clientX:100,clientY:y}]});
+    target.dispatchEvent(event);
+  };
+  touch('touchstart',text,500);touch('touchmove',text,450);touch('touchend',text,450);text.click();
+  e.w.stepFrame(100);e.w.stepFrame(100);assert.equal(feed.scrollTop,600);
+  const next=feed.children[1].querySelector('.text');
+  touch('touchstart',next,500);touch('touchend',next,500);next.click();
+  e.w.stepFrame(100);assert.equal(feed.scrollTop,1200);
+  const third=feed.children[2].querySelector('.text');
+  touch('touchstart',third,500);touch('touchmove',third,498);touch('touchend',third,498);third.click();
+  e.w.stepFrame(100);e.w.stepFrame(100);assert.equal(feed.scrollTop,1800);
+  await wait(async()=>(await e.w.AffirmStore.read()).round.resumeId===feed.children[3].dataset.id);
+});
 test('settings reject duplicates, preserve custom deletions for restore and save edits',async t=>{
   const e=setup('settings.html');t.after(()=>e.w.close());await loaded(e,'settings.html');
   const d=e.w.document;

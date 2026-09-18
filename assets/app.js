@@ -18,6 +18,7 @@
   const counted = new WeakMap(), rewards = [];
   let rewardShowing = false, summaryRoundId = null;
   let wheelTotal=0, wheelLatched=false, wheelTimer, touchStart=null;
+  let tapStart=null, suppressTap=false;
   let paging=null, queuedDirection=0, wantedBackground=null, backgroundAnimation;
   const images = new Map(), PAGE_MS = 100;
   const MAX_CARDS = 60;
@@ -381,17 +382,35 @@
     };
     paging.frame=requestAnimationFrame(step);
   }
+  feed.addEventListener('pointerdown',e=>{
+    suppressTap=e.button!==0 || e.isPrimary===false;
+    tapStart={x:e.clientX,y:e.clientY};
+  },{passive:true});
+  for(const event of ['pointermove','pointerup']) feed.addEventListener(event,e=>{
+    if(tapStart && Math.hypot(e.clientX-tapStart.x,e.clientY-tapStart.y)>8) suppressTap=true;
+    if(event==='pointerup') tapStart=null;
+  },{passive:true});
+  feed.addEventListener('pointercancel',()=>{tapStart=null;suppressTap=true;},{passive:true});
+  feed.addEventListener('click',e=>{
+    const blocked=suppressTap; suppressTap=false; tapStart=null;
+    if(blocked || e.defaultPrevented || e.button!==0 || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey ||
+      e.target.closest('button,a,input,textarea,select,[contenteditable="true"]') ||
+      !e.target.closest('.card') || window.getSelection()?.isCollapsed===false) return;
+    activity(); navigate(1);
+  });
   feed.addEventListener('touchstart',e=>{
     if(e.touches.length!==1 || feed.inert || window.visualViewport?.scale>1 || e.target.closest('button,a,input,textarea,select,[contenteditable="true"]')) {
       touchStart=null; return;
     }
     const touch=e.touches[0];
-    touchStart={x:touch.clientX,y:touch.clientY,target:e.target,claimed:false,paged:false};
+    suppressTap=false;
+    touchStart={x:touch.clientX,y:touch.clientY,target:e.target,claimed:false,paged:false,started:performance.now()};
   },{passive:true});
   feed.addEventListener('touchmove',e=>{
     if(!touchStart) return;
     if(e.touches.length!==1 || !e.cancelable) {touchStart=null;return;}
     const touch=e.touches[0], dx=touch.clientX-touchStart.x, dy=touchStart.y-touch.clientY;
+    if(Math.hypot(dx,dy)>8) suppressTap=true;
     if(!dx && !dy) return;
     const direction=Math.sign(dy);
     if(!touchStart.claimed) {
@@ -404,10 +423,16 @@
     if(!touchStart.paged && Math.abs(dy)>=24) {touchStart.paged=true;activity();navigate(direction);}
   },{passive:false});
   feed.addEventListener('touchend',e=>{
-    if(touchStart?.claimed && e.cancelable) e.preventDefault();
+    if(touchStart?.claimed && e.cancelable) {
+      e.preventDefault();
+      // A slight finger wobble cancels the native click; treat it as a tap once.
+      if(!touchStart.paged && !suppressTap && performance.now()-touchStart.started<500 && window.getSelection()?.isCollapsed!==false) {
+        suppressTap=true; activity(); navigate(1);
+      }
+    }
     touchStart=null;
   },{passive:false});
-  feed.addEventListener('touchcancel',()=>{touchStart=null;},{passive:true});
+  feed.addEventListener('touchcancel',()=>{touchStart=null;suppressTap=true;},{passive:true});
   window.addEventListener('resize',()=>finishPaging());
   feed.addEventListener('wheel',e=>{
     if(e.ctrlKey || e.metaKey || !e.deltaY || Math.abs(e.deltaX)>Math.abs(e.deltaY)) return;
