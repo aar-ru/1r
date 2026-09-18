@@ -15,7 +15,7 @@
   let focused = document.hasFocus() && !document.hidden;
   let intervals = [], lastFlush = Date.now(), timerBusy = false;
   const counted = new WeakMap(), rewards = [];
-  let rewardShowing = false;
+  let rewardShowing = false, summaryRoundId = null;
   let wheelTotal=0, wheelLatched=false, wheelTimer, navigationUntil=0;
   const MAX_CARDS = 60;
   drawer.hidden = progressDrawer.hidden = backdrop.hidden = rewardOverlay.hidden = true;
@@ -41,16 +41,22 @@
     if (!state) return;
     const day=today(), game=state.game, items=Core.activeItems(state,Catalog);
     const seen=items.filter(x=>day.seen.includes(x.id)).length;
+    const round=state.round;
+    const roundNumber=game.cycles+(round?.complete?0:1);
+    const roundText=round ? `Круг ${roundNumber}: ${round.seen.length}/${round.order.length}` : 'Нет карточек';
     const recent=game.lastGoalDate===Core.dateKey() || game.lastGoalDate===Core.previousDay(Core.dateKey());
     const values={'.session-timer':time(sessionMs),'.day-timer':time(day.timeMs),'.view-count':day.cards,
       '.cycle-remaining':state.round ? state.round.order.length-state.round.seen.length : 0,
       '.streak-count':recent ? game.streak : 0,'.xp-count':game.totalXp,'.level-count':Math.floor(game.totalXp/250)+1,
       '.total-cards':game.totalCards,'.cycle-count':game.cycles,
-      '.goal-progress':day.completed ? 'Цель выполнена' : `${seen} / ${items.length}`};
+      '.round-progress':roundText,
+      '.goal-progress':day.completed ? roundText : `Цель: ${seen}/${items.length}`};
     for (const [selector,value] of Object.entries(values)) {
       for (const element of document.querySelectorAll(selector)) element.textContent=value;
     }
-    document.querySelector('.goal-fill').style.width=`${day.completed ? 100 : items.length ? seen/items.length*100 : 0}%`;
+    document.getElementById('summaryLabel').textContent=day.completed?'Цель дня ✓':'Сегодня';
+    const fraction=day.completed ? (round ? round.seen.length/round.order.length : 0) : (items.length ? seen/items.length : 0);
+    document.querySelector('.goal-fill').style.width=`${fraction*100}%`;
     const list=document.getElementById('achievements');
     const earned=game.achievements.join(',');
     if(list.dataset.earned!==earned) {
@@ -81,13 +87,13 @@
     state=next;
     fingerprint=key;
     if (changed && !building) buildFeed();
-    syncFavorites(); updateHud();
+    syncFavorites(); updateHud(); presentReward();
   }
   async function prepare() {
     if (advancing) return;
     advancing=true;
     try {
-      const update=await Store.transaction(s=>Core.ensureRound(s,Catalog));
+      const update=await Store.transaction(s=>Core.ensureRound(s,Catalog,Math.random,false));
       applyState(update.state);
     } catch(error) { message(error.message); }
     finally { advancing=false; }
@@ -155,10 +161,18 @@
     const card=activeCard, key=Core.dateKey();
     if(!card || viewPending || document.hidden || !document.hasFocus() || !drawer.hidden || !progressDrawer.hidden || !rewardOverlay.hidden || counted.get(card)===key) return;
     viewPending=true;
+    tick();
+    const pending=intervals; intervals=[];
     try {
-      const {state:next,result}=await Store.transaction(s=>Core.view(s,Catalog,card.dataset.id,card.dataset.roundId,key));
-      counted.set(card,key); applyState(next); rewards.push(...result); presentReward();
-    } catch(error) { message(error.message); }
+      const {state:next,result}=await Store.transaction(s=>{
+        for(const [start,end] of pending) Core.addTime(s,start,end);
+        return Core.view(s,Catalog,card.dataset.id,card.dataset.roundId,key);
+      });
+      counted.set(card,key); applyState(next);
+      if(next.round?.complete) rewards.length=0;
+      else rewards.push(...result);
+      presentReward();
+    } catch(error) { intervals.unshift(...pending); message(error.message); }
     finally { viewPending=false; recoverSkipped(); if(activeCard!==card) recordActive(); }
   }
   const observer=new IntersectionObserver(entries=>{
@@ -202,19 +216,51 @@
     if(previousFocus?.isConnected) previousFocus.focus({preventScroll:true});
   }
   function presentReward() {
-    if(rewardShowing || !rewards.length || !drawer.hidden || !progressDrawer.hidden) return;
-    const reward=rewards.shift(); rewardShowing=true;
+    if(rewardShowing || !state || !drawer.hidden || !progressDrawer.hidden || document.hidden || !document.hasFocus()) return;
+    const summary=state.round?.complete ? state.round.summary : null;
+    const reward=summary ? {emoji:'🎉',title:`Круг ${summary.number} завершён!`,text:'Все карточки этого круга просмотрены. Можно продолжить в своём темпе.'} : rewards.shift();
+    if(!reward) return;
+    rewardShowing=true; summaryRoundId=summary?state.round.id:null;
+    if(summary) rewards.length=0;
     document.getElementById('rewardEmoji').textContent=reward.emoji;
     document.getElementById('rewardTitle').textContent=reward.title;
     document.getElementById('rewardText').textContent=reward.text;
+    const details=document.getElementById('roundSummary');
+    details.hidden=!summary;
+    rewardOverlay.classList.toggle('round-result',!!summary);
+    rewardClose.textContent=summary?'Следующий круг':'Продолжить';
+    if(summary) {
+      document.getElementById('roundCards').textContent=summary.cards;
+      document.getElementById('roundTimeLabel').textContent=summary.fullStats?'Время круга':'Время сегодня';
+      document.getElementById('roundTime').textContent=time(summary.timeMs);
+      document.getElementById('roundXpLabel').textContent=summary.fullStats?'Заработано за круг':'Бонус за круг';
+      document.getElementById('roundXp').textContent=`+${summary.xp} XP`;
+      const list=document.getElementById('roundRewards'); list.replaceChildren();
+      for(const earned of summary.rewards) {
+        const item=document.createElement('li'); item.textContent=`${earned.emoji} ${earned.title}`; list.appendChild(item);
+      }
+    }
     openModal(rewardOverlay);
     if(state.haptics) { try { navigator.vibrate?.([60,40,60]); } catch {} }
   }
-  function closeReward() {
-    closeModal(rewardOverlay); rewardShowing=false;
-    if(rewards.length) presentReward();
-    else if(state.round?.complete) prepare();
-    else recordActive();
+  async function closeReward() {
+    if(rewardClose.disabled) return;
+    if(summaryRoundId) {
+      const completedId=summaryRoundId;
+      rewardClose.disabled=true; tick();
+      const pending=intervals; intervals=[];
+      try {
+        const update=await Store.transaction(s=>{
+          for(const [start,end] of pending) Core.addTime(s,start,end);
+          // Another tab may already have continued. Never replace its new round.
+          if(s.round?.id===completedId && s.round.complete) Core.ensureRound(s,Catalog);
+        });
+        applyState(update.state);
+      } catch(error) { intervals.unshift(...pending); message(error.message); return; }
+      finally { rewardClose.disabled=false; }
+    }
+    closeModal(rewardOverlay); rewardShowing=false; summaryRoundId=null;
+    presentReward(); recordActive();
   }
   function closeDrawer(modal) { closeModal(modal); presentReward(); recordActive(); }
   document.querySelector('.open-saved').addEventListener('click',()=>openModal(drawer));
@@ -250,7 +296,7 @@
   }
   function navigate(direction) {
     if(Date.now()<navigationUntil) return;
-    if(state.round?.complete && direction>0) {prepare();return;}
+    if(state.round?.complete && direction>0) {presentReward();return;}
     navigationUntil=Date.now()+380;
     feed.scrollBy({top:feed.clientHeight*direction,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
   }
@@ -285,7 +331,7 @@
     const now=Date.now(); tick();
     if(now-lastActivity>=30000) sessionMs=0;
     lastActivity=now;
-    if(state?.round?.complete && !rewardShowing && !rewards.length) prepare();
+    if(state?.round?.complete) presentReward();
   }
   for(const event of ['pointerdown','touchstart','keydown']) document.addEventListener(event,activity,{passive:true});
   feed.addEventListener('scroll',activity,{passive:true});

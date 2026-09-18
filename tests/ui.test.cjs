@@ -197,3 +197,50 @@ test('long sessions keep a bounded DOM while preserving every unread card in the
   assert.equal(state.round.order.length,441);assert.equal(state.round.seen.length,18);
   assert.equal(state.game.cycles,0);assert.equal(e.w.document.querySelectorAll('.topbar').length,1);
 });
+
+test('completion shows saved totals; reload preserves them; next round advances progress after the daily goal',async t=>{
+  const idb=new IDBFactory(),a=setup('index.html',{idb});t.after(()=>a.w.close());await loaded(a);
+  await a.w.AffirmStore.transaction(s=>{s.deleted=a.w.AffirmCatalog.items.filter(x=>!['u1','u2','u3'].includes(x.id)).map(x=>x.id);Core.ensureRound(s,a.w.AffirmCatalog);});
+  const firstRound=(await a.w.AffirmStore.read()).round.id;
+  for(const [i,card] of [...a.w.document.querySelectorAll('.card')].entries()) {
+    a.w.testObserver.show(card);await wait(async()=>(await a.w.AffirmStore.read()).round.seen.length===i+1);
+  }
+  const da=a.w.document;
+  await wait(()=>!da.getElementById('rewardOverlay').hidden);
+  assert.equal(da.getElementById('rewardTitle').textContent,'Круг 1 завершён!');
+  assert.equal(da.getElementById('roundCards').textContent,'3');assert.equal(da.getElementById('roundXp').textContent,'+123 XP');
+  assert.equal(da.getElementById('rewardClose').textContent,'Следующий круг');
+  assert.equal(da.getElementById('summaryLabel').textContent,'Цель дня ✓');
+  assert.equal(da.querySelector('.goal-progress').textContent,'Круг 1: 3/3');
+  assert.match(da.getElementById('roundRewards').textContent,/Цель дня выполнена/);
+  const b=setup('index.html',{idb});t.after(()=>b.w.close());await loaded(b);
+  const db=b.w.document;await wait(()=>!db.getElementById('rewardOverlay').hidden);
+  assert.equal((await b.w.AffirmStore.read()).round.id,firstRound);
+  assert.equal(db.getElementById('roundXp').textContent,'+123 XP');
+  b.w.testObserver.show(db.querySelector('.card'));
+  assert.equal((await b.w.AffirmStore.read()).game.totalXp,123);
+  db.getElementById('rewardClose').click();
+  await wait(()=>db.getElementById('rewardOverlay').hidden);
+  const secondRound=(await b.w.AffirmStore.read()).round.id;assert.notEqual(secondRound,firstRound);
+  assert.equal(db.querySelector('.goal-progress').textContent,'Круг 2: 0/3');
+  assert.equal(db.querySelector('.goal-fill').style.width,'0%');
+  b.w.testObserver.show(db.querySelector('.card'));
+  await wait(()=>db.querySelector('.goal-progress').textContent==='Круг 2: 1/3');
+  assert.ok(parseFloat(db.querySelector('.goal-fill').style.width)>33);
+  // Continuing the old summary in another tab must not replace the new round.
+  da.getElementById('rewardClose').click();await wait(()=>da.getElementById('rewardOverlay').hidden);
+  assert.equal((await a.w.AffirmStore.read()).round.id,secondRound);
+  assert.equal((await a.w.AffirmStore.read()).game.totalXp,124);
+  for(const [i,card] of [...db.querySelectorAll('.card')].slice(1).entries()) {
+    b.w.testObserver.show(card);await wait(async()=>(await b.w.AffirmStore.read()).round.seen.length===i+2);
+  }
+  assert.equal(db.getElementById('rewardTitle').textContent,'Круг 2 завершён!');
+  assert.equal(db.getElementById('roundXp').textContent,'+103 XP');
+  assert.equal((await b.w.AffirmStore.read()).game.totalXp,226);
+  assert.equal((await b.w.AffirmStore.read()).game.streak,1);
+  // Midnight removes yesterday's check without discarding the current round.
+  await b.w.AffirmStore.transaction(s=>{delete s.days[Core.dateKey()];});
+  assert.equal(db.getElementById('summaryLabel').textContent,'Сегодня');
+  assert.equal(db.querySelector('.goal-progress').textContent,'Цель: 0/3');
+  assert.deepEqual(a.errors,[]);assert.deepEqual(b.errors,[]);
+});
