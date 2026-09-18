@@ -18,7 +18,17 @@
     @supports (height: 100svh) { body { min-height: 100svh; } }
     button { font: inherit; }
 
+    #background {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+      background: linear-gradient(160deg, #354542, #111b22);
+    }
+    #background img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+
     #feed {
+      position: relative;
       height: 100vh;
       height: 100dvh;
       overflow-y: auto;
@@ -26,9 +36,8 @@
       scroll-behavior: auto;
       overscroll-behavior-y: contain;
       -webkit-overflow-scrolling: touch;
-      touch-action: pan-y;
+      touch-action: pan-y pinch-zoom;
       scrollbar-width: none;
-      background: #0b0b0b;
     }
     #feed::-webkit-scrollbar { display: none; }
 
@@ -40,20 +49,8 @@
       scroll-snap-align: start;
       scroll-snap-stop: always;
       overflow: hidden;
-      background: #171717;
       isolation: isolate;
     }
-
-    .bg {
-      position: absolute;
-      inset: -3%;
-      background-position: center;
-      background-size: cover;
-      transform: scale(1.04);
-      transition: transform 8s ease;
-      z-index: -3;
-    }
-    .card.active .bg { transform: scale(1.12); }
 
     .overlay {
       position: absolute;
@@ -343,6 +340,7 @@
     @media (min-width: 701px) {
       body { display:grid; place-items:center; background:#090909; }
       #feed { width:min(430px, 100vw); height:min(900px, 100dvh); border-radius:30px; overflow-y:auto; box-shadow:0 30px 90px rgba(0,0,0,.45); }
+      #background { inset:auto; left:50%; top:50%; transform:translate(-50%,-50%); width:min(430px,100vw); height:min(900px,100dvh); border-radius:30px; }
       .card { height:min(900px, 100dvh); }
       .topbar { left:50%; right:auto; width:398px; transform:translateX(-50%); top:max(14px, calc((100dvh - 900px) / 2 + 14px)); }
       .drawer { left:50%; right:auto; width:min(430px, 100vw); transform:translate(-50%, 102%); }
@@ -371,6 +369,7 @@
   </style>
 </head>
 <body>
+  <div id="background" aria-hidden="true"></div>
   <div id="storageWarning" class="storage-warning" role="status" hidden>Браузер не разрешил сохранять данные. Изменения действуют только до закрытия страницы; сделай резервную копию в настройках.</div>
   <header class="topbar" id="topbar">
     <div class="brand">Affirm</div>
@@ -443,6 +442,6 @@
   <script src="assets/catalog.js"></script>
   <script src="assets/state.js"></script>
   <script src="assets/store.js"></script>
-  <script src="assets/app.js"></script>
+  <script src="assets/app.js?v=20260918-6"></script>
 </body>
 </html>
