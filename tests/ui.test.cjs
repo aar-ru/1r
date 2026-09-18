@@ -35,6 +35,7 @@ function setup(page='index.html',{idb=new IDBFactory(),denyStorage=false,channel
         show(el){this.cb([...this.elements].map(target=>({target,isIntersecting:target===el,intersectionRatio:target===el?1:0})));}
       };
       w.HTMLElement.prototype.scrollBy=function(options){this.lastScroll=options;};
+      w.HTMLElement.prototype.scrollTo=function(options){this.lastScrollTo=options;};
     }
   });
   return {dom,w:dom.window,errors};
@@ -192,6 +193,34 @@ test('wheel inertia pages once, while zoom and scrolling long text stay native',
   await new Promise(r=>setTimeout(r,410));
   assert.equal(wheel(feed,{deltaY:-3,deltaMode:1}).defaultPrevented,true);
   assert.deepEqual(movements,[600,600,-600]);
+});
+test('a short vertical swipe pages instantly once and leaves long text scrolling native',async t=>{
+  const e=setup();t.after(()=>e.w.close());await loaded(e);
+  const feed=e.w.document.getElementById('feed'),text=e.w.document.querySelector('.text');
+  Object.defineProperty(feed,'clientHeight',{value:600});
+  const movements=[];feed.scrollTo=options=>movements.push(options);
+  const touch=(type,target,x,y)=>{
+    const event=new e.w.Event(type,{bubbles:true,cancelable:true});
+    Object.defineProperty(event,'touches',{value:type==='touchend'?[]:[{clientX:x,clientY:y}]});
+    target.dispatchEvent(event);return event;
+  };
+  touch('touchstart',feed,100,500);
+  const move=touch('touchmove',feed,102,470);
+  assert.equal(move.defaultPrevented,true);
+  assert.equal(movements.length,1);assert.equal(movements[0].top,600);assert.equal(movements[0].behavior,'auto');
+  touch('touchmove',feed,102,380);
+  assert.equal(movements.length,1);
+  touch('touchend',feed,102,380);
+  touch('touchstart',feed,100,500);touch('touchmove',feed,130,485);touch('touchend',feed,130,485);
+  assert.equal(movements.length,1);
+  Object.defineProperty(text,'clientHeight',{value:150});Object.defineProperty(text,'scrollHeight',{value:500});
+  touch('touchstart',text,100,500);
+  const textMove=touch('touchmove',text,100,450);
+  assert.equal(textMove.defaultPrevented,false);assert.equal(movements.length,1);
+  text.scrollTop=350;
+  touch('touchstart',text,100,500);
+  assert.equal(touch('touchmove',text,100,450).defaultPrevented,true);
+  assert.equal(movements.at(-1).top,600);assert.equal(movements.at(-1).behavior,'auto');
 });
 test('cards skipped by a fast jump return after the last card and complete the round once',async t=>{
   const e=setup();t.after(()=>e.w.close());await loaded(e);
