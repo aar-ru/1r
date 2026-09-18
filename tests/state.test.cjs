@@ -82,3 +82,41 @@ test('backup round trip preserves data and rejects malformed input',()=>{
   assert.throws(()=>Core.restoreBackup({...s,custom:[{id:'u1',theme:'self',text:'bad'}]},catalog),/некорректные/);
   assert.throws(()=>Core.restoreBackup({...s,custom:[{id:'c2',theme:'__proto__',text:'bad'}]},catalog),/некорректные/);
 });
+
+test('round summary includes only this round time and XP and survives reopening and backup',()=>{
+  const s=Core.empty();s.game.totalXp=500;
+  Core.addTime(s,1000,61000);Core.ensureRound(s,catalog);
+  const round=s.round.id;
+  for(const id of s.round.order) { Core.addTime(s,61000,91000);Core.view(s,catalog,id,round,day); }
+  assert.equal(s.round.summary.number,1);assert.equal(s.round.summary.cards,3);
+  assert.equal(s.round.summary.timeMs,90000);assert.equal(s.round.summary.xp,123);
+  assert.equal(s.round.summary.fullStats,true);
+  const summary=structuredClone(s.round.summary);
+  Core.addTime(s,100000,110000);Core.view(s,catalog,s.round.resumeId,round,'2026-09-18');
+  assert.deepEqual(s.round.summary,summary);assert.equal(s.game.totalXp,623);
+  Core.ensureRound(s,catalog,Math.random,false);assert.equal(s.round.id,round);
+  assert.deepEqual(Core.restoreBackup(JSON.parse(JSON.stringify(s)),catalog),s);
+  Core.ensureRound(s,catalog);assert.notEqual(s.round.id,round);
+  for(const id of s.round.order)Core.view(s,catalog,id,s.round.id,day);
+  assert.equal(s.round.summary.number,2);assert.equal(s.round.summary.xp,103);
+  assert.equal(s.round.summary.timeMs,0);assert.equal(s.game.streak,1);
+});
+test('existing rounds finish without reset and distinguish legacy totals from full round statistics',()=>{
+  const s=Core.empty();Core.ensureRound(s,catalog);delete s.round.stats;
+  const round=s.round.id;Core.view(s,catalog,s.round.order[0],round,day);
+  assert.equal(Core.ensureRound(s,catalog,Math.random,false).id,round);
+  Core.getDay(s,day).timeMs=120000;
+  for(const id of s.round.order)Core.view(s,catalog,id,round,day);
+  assert.equal(s.round.summary.fullStats,false);assert.equal(s.round.summary.timeMs,120000);
+  assert.equal(s.round.summary.xp,100);assert.equal(s.game.totalXp,123);
+  assert.equal(s.round.summary.cards,3);
+});
+test('round totals span midnight while daily goal bonuses remain once per date',()=>{
+  const s=Core.empty();Core.ensureRound(s,catalog);
+  const round=s.round.id,ids=s.round.order;
+  const midnight=new Date(2026,8,18).getTime();
+  Core.view(s,catalog,ids[0],round,day);Core.addTime(s,midnight-1000,midnight+2000);
+  for(const id of ids)Core.view(s,catalog,id,round,'2026-09-18');
+  assert.equal(s.round.summary.timeMs,3000);assert.equal(s.round.summary.xp,124);
+  assert.equal(s.days[day].completed,false);assert.equal(s.days['2026-09-18'].completed,true);
+});

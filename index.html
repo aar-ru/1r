@@ -224,6 +224,8 @@
     .reward-overlay.open { opacity:1; pointer-events:auto; }
     .reward-card {
       width:min(360px,100%);
+      max-height:calc(100dvh - 48px);
+      overflow-y:auto;
       padding:28px 22px 22px;
       border:1px solid rgba(255,255,255,.18);
       border-radius:30px;
@@ -238,6 +240,16 @@
     .reward-title { font-size:26px; line-height:1.06; font-weight:850; letter-spacing:-.035em; }
     .reward-text { margin:10px auto 20px; max-width:290px; color:rgba(255,255,255,.72); font-size:14px; line-height:1.4; }
     .reward-button { width:100%; border:0; border-radius:17px; padding:14px 16px; background:#fff; color:#111; font-weight:850; cursor:pointer; }
+    .reward-button:disabled { opacity:.6; cursor:wait; }
+    .round-result .reward-emoji { font-size:40px; }
+    .round-result .reward-text { margin-bottom:16px; }
+    .round-metrics { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; margin:0 0 14px; }
+    .round-metrics > div { padding:12px 8px; border:1px solid var(--glass-border); border-radius:16px; background:rgba(255,255,255,.04); }
+    .round-metrics dt { font-size:11px; color:var(--muted); }
+    .round-metrics dd { margin:6px 0 0; font-size:22px; font-weight:750; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+    .round-metrics .round-xp { grid-column:1 / -1; }
+    .round-rewards { list-style:none; margin:0 0 18px; padding:0; font-size:13px; line-height:1.5; text-align:left; }
+    .round-rewards li + li { margin-top:6px; }
     @keyframes rewardPop { 0%{transform:scale(.5) rotate(-8deg)} 70%{transform:scale(1.12) rotate(3deg)} 100%{transform:scale(1) rotate(0)} }
 
     .toast {
@@ -367,7 +379,7 @@
       <button class="icon-btn open-saved" aria-label="Открыть сохранённые">♡<span class="count-badge" hidden></span></button>
     </nav>
     <button class="progress-summary" id="openProgress" aria-label="Мой прогресс" aria-haspopup="dialog">
-      <span>Сегодня <strong class="day-timer">00:00</strong></span>
+      <span><span id="summaryLabel">Сегодня</span> <strong class="day-timer">00:00</strong></span>
       <span class="goal-progress">0 / 0</span>
       <span class="goal-track" aria-hidden="true"><span class="goal-fill"></span></span>
     </button>
@@ -389,6 +401,7 @@
       <button class="icon-btn" id="closeProgress" aria-label="Закрыть прогресс">✕</button>
     </div>
     <p class="progress-intro">Цель дня — просмотреть все уникальные аффирмации. Серия растёт за каждый день с выполненной целью.</p>
+    <p class="progress-intro round-progress"></p>
     <h3 class="progress-section">Сегодня</h3>
     <dl class="progress-grid">
       <div><dt>Время в приложении</dt><dd class="day-timer">00:00</dd></div>
@@ -415,6 +428,14 @@
       <div class="reward-emoji" id="rewardEmoji">🏆</div>
       <div class="reward-title" id="rewardTitle">Достижение</div>
       <div class="reward-text" id="rewardText"></div>
+      <div id="roundSummary" hidden>
+        <dl class="round-metrics">
+          <div><dt>Карточек</dt><dd id="roundCards">0</dd></div>
+          <div><dt id="roundTimeLabel">Время круга</dt><dd id="roundTime">00:00</dd></div>
+          <div class="round-xp"><dt id="roundXpLabel">Заработано за круг</dt><dd id="roundXp">0 XP</dd></div>
+        </dl>
+        <ul class="round-rewards" id="roundRewards"></ul>
+      </div>
       <button class="reward-button" id="rewardClose" type="button">Продолжить</button>
     </div>
   </div>

@@ -77,21 +77,23 @@
     return state.days[key] ||= { cards: 0, timeMs: 0, seen: [], completed: false };
   }
   function signature(items) { return items.map(x => x.id).sort().join(','); }
+  function totalTime(state) { return Object.values(state.days).reduce((sum,day)=>sum+day.timeMs,0); }
   function token() {
     return root.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
-  function ensureRound(state, catalog, random = Math.random) {
+  function ensureRound(state, catalog, random = Math.random, advance = true) {
     const items = activeItems(state, catalog);
     const ids = items.map(x => x.id);
     const sig = signature(items);
     if (!ids.length) { state.round = null; return null; }
-    if (state.round && state.round.signature === sig && !state.round.complete) return state.round;
+    if (state.round && state.round.signature === sig && (!state.round.complete || (!advance && state.round.summary))) return state.round;
     const lastId = state.round?.resumeId;
     for (let i=ids.length-1; i>0; i--) {
       const j = Math.floor(random() * (i+1)); [ids[i], ids[j]] = [ids[j], ids[i]];
     }
     if (ids.length > 1 && ids[0] === lastId) [ids[0],ids[1]] = [ids[1],ids[0]];
-    state.round = { id: token(), signature: sig, order: ids, seen: [], resumeId: null, complete: false };
+    state.round = { id: token(), signature: sig, order: ids, seen: [], resumeId: null, complete: false,
+      stats: { timeBase: totalTime(state), xpBase: state.game.totalXp } };
     return state.round;
   }
   function preview(state, catalog) {
@@ -106,7 +108,7 @@
     const rewards = [];
     const round = state.round;
     const items = activeItems(state, catalog);
-    if (!round || round.id !== roundId || round.signature !== signature(items) || !items.some(x=>x.id===id)) return rewards;
+    if (!round || round.complete || round.id !== roundId || round.signature !== signature(items) || !items.some(x=>x.id===id)) return rewards;
     const day = getDay(state, dayKey);
     const game = state.game;
     const oldLevel = Math.floor(game.totalXp / 250) + 1;
@@ -122,7 +124,7 @@
       round.seen.push(id);
       if (round.order.every(id => round.seen.includes(id)) && !round.complete) {
         round.complete = true; game.cycles++; game.totalXp += 100;
-        rewards.push({ emoji: '🔄', title: 'Полный круг!', text: 'Вся колода просмотрена · +100 XP' });
+        rewards.push({ type: 'cycle', emoji: '🔄', title: 'Полный круг!', text: 'Вся колода просмотрена · +100 XP' });
       }
     }
     if (firstInDay && !day.completed && items.length && items.every(x => day.seen.includes(x.id))) {
@@ -138,6 +140,13 @@
     if (level > oldLevel) rewards.push({ emoji: '⭐', title: `Уровень ${level}`, text: `У тебя уже ${game.totalXp} XP.` });
     for (const [key, achieved, emoji, title] of milestones(game)) if (achieved && !game.achievements.includes(key)) {
       game.achievements.push(key); rewards.push({ emoji, title, text: 'Новое достижение!' });
+    }
+    if(round.complete) {
+      // Older in-progress rounds have no starting totals. Keep them and label the fallback honestly.
+      round.summary = { number: game.cycles, cards: round.seen.length, fullStats: !!round.stats,
+        timeMs: round.stats ? Math.max(0,totalTime(state)-round.stats.timeBase) : day.timeMs,
+        xp: round.stats ? Math.max(0,game.totalXp-round.stats.xpBase) : 100,
+        rewards: rewards.filter(reward=>reward.type!=='cycle').map(({emoji,title})=>({emoji,title})) };
     }
     return rewards;
   }
@@ -197,6 +206,18 @@
        r.order.length===activeIds.size && new Set(r.order).size===activeIds.size && r.order.every(id=>activeIds.has(id)) &&
        Array.isArray(r.seen) && r.seen.every(id=>activeIds.has(id))) {
       state.round={id:r.id,signature:r.signature,order:[...r.order],seen:unique(r.seen),resumeId:activeIds.has(r.resumeId)?r.resumeId:null,complete:r.complete===true && activeIds.size>0 && unique(r.seen).length===activeIds.size};
+      const validMetric=(value,max)=>Number.isFinite(value) && value>=0 && value<=max;
+      if(r.stats && validMetric(r.stats.timeBase,totalTime(state)) && validMetric(r.stats.xpBase,state.game.totalXp)) {
+        state.round.stats={timeBase:numeric(r.stats.timeBase),xpBase:numeric(r.stats.xpBase)};
+      }
+      const summary=r.summary;
+      if(state.round.complete && summary && summary.number===state.game.cycles && summary.cards===activeIds.size &&
+         validMetric(summary.timeMs,totalTime(state)) && validMetric(summary.xp,state.game.totalXp) && Array.isArray(summary.rewards)) {
+        state.round.summary={number:summary.number,cards:summary.cards,fullStats:summary.fullStats===true,
+          timeMs:numeric(summary.timeMs),xp:numeric(summary.xp),rewards:summary.rewards
+            .filter(x=>x && typeof x.emoji==='string' && x.emoji.length<=20 && typeof x.title==='string' && x.title.length<=120)
+            .map(({emoji,title})=>({emoji,title}))};
+      }
     }
     return state;
   }
