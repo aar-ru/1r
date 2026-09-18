@@ -17,6 +17,15 @@ function setup(page='index.html',{idb=new IDBFactory(),denyStorage=false,channel
     url:`https://affirm.test/${page}`,runScripts:'dangerously',resources:new Assets(),pretendToBeVisual:true,virtualConsole:vc,
     beforeParse(w){
       w.indexedDB=idb;w.structuredClone=structuredClone;w.matchMedia=()=>({matches:false});
+      if(idb) {
+        const open=idb.open.bind(idb);let latestDatabase;
+        idb.open=(...args)=>{
+          const request=open(...args);
+          request.addEventListener('success',()=>{latestDatabase=request.result;});
+          return request;
+        };
+        w.closeStoreConnection=()=>latestDatabase?.close();
+      }
       w.confirm=()=>true;w.document.hasFocus=()=>true;
       if(denyStorage)Object.defineProperty(w,'localStorage',{get(){throw Error('Blocked');}});
       w.BroadcastChannel=class{constructor(){channelHub.push(this);}postMessage(data){for(const ch of channelHub)if(ch!==this)setImmediate(()=>ch.onmessage?.({data}));}close(){}};
@@ -126,6 +135,21 @@ test('aborted transaction does not report success or overwrite prior data',async
   const e=setup('settings.html');t.after(()=>e.w.close());await loaded(e,'settings.html');
   await assert.rejects(e.w.AffirmStore.transaction(s=>{s.saved=['u1'];throw Error('Write rejected');}),/Write rejected/);
   assert.deepEqual((await e.w.AffirmStore.read()).saved,[]);
+});
+test('Safari-style closed IndexedDB connection reconnects for reads and writes',async t=>{
+  const e=setup('settings.html');t.after(()=>e.w.close());await loaded(e,'settings.html');
+  e.w.closeStoreConnection();
+  const written=await e.w.AffirmStore.transaction(s=>{s.saved=['u1'];return 'ok';});
+  assert.equal(written.result,'ok');assert.deepEqual(written.state.saved,['u1']);
+  e.w.closeStoreConnection();
+  assert.deepEqual((await e.w.AffirmStore.read()).saved,['u1']);
+  e.w.closeStoreConnection();
+  const parallel=await Promise.all([
+    e.w.AffirmStore.transaction(s=>{s.saved.push('u2');}),
+    e.w.AffirmStore.transaction(s=>{s.saved.push('u3');})
+  ]);
+  assert.deepEqual(parallel.at(-1).state.saved,['u1','u2','u3']);
+  assert.deepEqual(e.errors,[]);
 });
 
 test('one persistent header opens progress, traps focus and restores its trigger',async t=>{
