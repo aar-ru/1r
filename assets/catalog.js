@@ -2073,37 +2073,37 @@ window.AffirmCatalog = {
     },
     {
       "id": "u386",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Яна нормальная, хорошая, хорошая девочка."
     },
     {
       "id": "u387",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Яна всегда рада, когда я пишу ей, звоню и вообще проявляю внимание и показывает мне эту радость."
     },
     {
       "id": "u388",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Так уж вышло, что Яна обожает мой естественный запах."
     },
     {
       "id": "u389",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Яна хочет от меня детей."
     },
     {
       "id": "u390",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "С Яной отношения крепнут каждый день."
     },
     {
       "id": "u391",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Мы в отношениях с Яной, ура в стабильных и теплых."
     },
     {
       "id": "u392",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Яна мне доверяет и не злится на меня."
     },
     {
@@ -2118,7 +2118,7 @@ window.AffirmCatalog = {
     },
     {
       "id": "u395",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Яна все делает чтобы мне понравиться."
     },
     {
@@ -2128,37 +2128,37 @@ window.AffirmCatalog = {
     },
     {
       "id": "u397",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Яну никто больше не интересует, кроме меня."
     },
     {
       "id": "u398",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Яне вообще никто больше не нравится, кроме меня."
     },
     {
       "id": "u399",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Яне ни с кем больше не интересно, кроме меня."
     },
     {
       "id": "u400",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Яне никто не подходит, кроме меня."
     },
     {
       "id": "u401",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Яну от всех просто воротит, кроме меня."
     },
     {
       "id": "u402",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Яна ни с кем больше не общается, кроме меня."
     },
     {
       "id": "u403",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Яна призналась мне в любви."
     },
     {
@@ -2173,22 +2173,22 @@ window.AffirmCatalog = {
     },
     {
       "id": "u406",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Яне со мной намного комфортнее, чем без меня."
     },
     {
       "id": "u407",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Яна не использует на мне круги ада, сближается сама полностью, и без откатов."
     },
     {
       "id": "u408",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Секс у нас с Яной сколько угодно и когда я захочу."
     },
     {
       "id": "u409",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Яне ни с кем больше не интересно."
     },
     {
@@ -2473,17 +2473,17 @@ window.AffirmCatalog = {
     },
     {
       "id": "u466",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Я в шоке, мы так быстро помирились c Яной"
     },
     {
       "id": "u467",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Я только начал повторять аффирмации, и Яна тут же написала"
     },
     {
       "id": "u468",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Яна сама предложила встречаться, я вообще в ахуе"
     }
   ]
