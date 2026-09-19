@@ -2093,7 +2093,7 @@ window.AffirmCatalog = {
     },
     {
       "id": "u390",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "С Яной отношения крепнут каждый день."
     },
     {
@@ -2173,7 +2173,7 @@ window.AffirmCatalog = {
     },
     {
       "id": "u406",
-      "theme": "fulfilled",
+      "theme": "yana",
       "text": "Яне со мной намного комфортнее, чем без меня."
     },
     {
