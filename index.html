@@ -40,6 +40,9 @@
       scrollbar-width: none;
     }
     #feed::-webkit-scrollbar { display: none; }
+    .feed-status { min-height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:150px 24px; text-align:center; }
+    .feed-status button { border:0; border-radius:16px; padding:14px 18px; color:#111; background:#fff; cursor:pointer; }
+    .feed-status button:disabled { opacity:.6; }
 
     .card {
       position: relative;
@@ -380,11 +383,11 @@
     </nav>
     <button class="progress-summary" id="openProgress" aria-label="Мой прогресс" aria-haspopup="dialog">
       <span><span id="summaryLabel">Сегодня</span> <strong class="day-timer">00:00</strong></span>
-      <span class="goal-progress">0 / 0</span>
+      <span class="goal-progress">Загрузка…</span>
       <span class="goal-track" aria-hidden="true"><span class="goal-fill"></span></span>
     </button>
   </header>
-  <main id="feed" aria-label="Лента аффирмаций"></main>
+  <main id="feed" aria-label="Лента аффирмаций"><div class="feed-status" role="status">Загружаю карточки…</div></main>
 
   <div class="drawer-backdrop" id="backdrop"></div>
   <aside class="drawer" id="drawer" aria-label="Сохранённые аффирмации">
@@ -442,7 +445,7 @@
 
   <script src="assets/catalog.js"></script>
   <script src="assets/state.js?v=20260919-8"></script>
-  <script src="assets/store.js"></script>
-  <script src="assets/app.js?v=20260918-7"></script>
+  <script src="assets/store.js?v=20260919-9"></script>
+  <script src="assets/app.js?v=20260919-9"></script>
 </body>
 </html>

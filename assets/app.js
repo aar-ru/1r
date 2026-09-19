@@ -11,7 +11,7 @@
   const rewardOverlay = document.getElementById('rewardOverlay');
   const rewardClose = document.getElementById('rewardClose');
   const toast = document.getElementById('toast');
-  let state, fingerprint = '', plan = [], planned = 0, activeCard, building = false, advancing = false;
+  let state, fingerprint = '', plan = [], planned = 0, activeCard, building = false, preparing, resuming, restoreFrame;
   let viewPending = false, previousFocus, sessionMs = 0, lastTick = Date.now(), lastActivity = Date.now();
   let focused = document.hasFocus() && !document.hidden;
   let intervals = [], lastFlush = Date.now(), timerBusy = false;
@@ -29,6 +29,7 @@
     toast.textContent = text; toast.classList.add('show');
     clearTimeout(message.timer); message.timer=setTimeout(()=>toast.classList.remove('show'),3500);
   }
+  function reportError(error) { if(!error.pageHidden) message(error.message); }
   window.addEventListener('affirm-error', e=>message(e.detail));
   function imageFor(item) {
     const images=Catalog.themes[item.theme].images;
@@ -131,20 +132,31 @@
   function applyState(next) {
     if (state && next.revision < state.revision) return;
     const key=JSON.stringify(Core.activeItems(next,Catalog));
-    const changed=key!==fingerprint || state?.round?.id!==next.round?.id;
+    const changed=key!==fingerprint || state?.round?.id!==next.round?.id ||
+      (!feed.querySelector('.card') && !feed.querySelector('.feed-empty'));
     state=next;
     fingerprint=key;
     if (changed && !building) buildFeed();
     syncFavorites(); updateHud(); presentReward();
   }
-  async function prepare() {
-    if (advancing) return;
-    advancing=true;
-    try {
-      const update=await Store.transaction(s=>Core.ensureRound(s,Catalog,Math.random,false));
-      applyState(update.state);
-    } catch(error) { message(error.message); }
-    finally { advancing=false; }
+  function showLoadError() {
+    if(feed.querySelector('.card') || feed.querySelector('.feed-empty')) return;
+    const status=document.createElement('div');status.className='feed-status';status.setAttribute('role','status');
+    const label=document.createElement('p');label.textContent='Не удалось загрузить карточки.';
+    const retry=document.createElement('button');retry.type='button';retry.textContent='Попробовать ещё раз';
+    retry.addEventListener('click',async()=>{retry.disabled=true;await resume();if(retry.isConnected) retry.disabled=false;});
+    status.append(label,retry);feed.replaceChildren(status);
+  }
+  function prepare() {
+    if(preparing) return preparing;
+    preparing=(async()=>{
+      try {
+        const update=await Store.transaction(s=>Core.ensureRound(s,Catalog,Math.random,false));
+        applyState(update.state);
+      } catch(error) { reportError(error);if(!error.pageHidden) showLoadError(); }
+      finally { preparing=undefined; }
+    })();
+    return preparing;
   }
   function makeCard(item) {
     const card=document.createElement('section');
@@ -162,7 +174,7 @@
       try {
         const {state:next}=await Store.transaction(s=>Core.toggleSaved(s,Catalog,item.id));
         applyState(next); message(next.saved.includes(item.id)?'Сохранено':'Удалено из сохранённых');
-      } catch(error) { message(error.message); }
+      } catch(error) { reportError(error); }
       finally { button.disabled=false; }
     });
     return card;
@@ -195,17 +207,36 @@
   }
   function buildFeed() {
     finishPaging(false); touchStart=null;
-    building=true; observer.disconnect(); activeCard=null; feed.replaceChildren(); feed.scrollTop=0;
-    plan=Core.preview(state,Catalog); planned=0;
-    if(!Core.activeItems(state,Catalog).length) {
+    // Compute the queue before replacing a still usable feed.
+    const nextPlan=Core.preview(state,Catalog);
+    const hasItems=Core.activeItems(state,Catalog).length>0;
+    if(hasItems && !nextPlan.length) {if(!state.round?.complete) prepare();return;}
+    building=true;
+    try {
+    observer.disconnect(); activeCard=null; feed.replaceChildren(); feed.scrollTop=0;
+    plan=nextPlan; planned=0;
+    if(!hasItems) {
       const empty=document.createElement('div'); empty.className='empty feed-empty';
       const label=document.createElement('p'); label.textContent='В ленте пока нет аффирмаций.';
       const link=document.createElement('a'); link.href='settings.html'; link.textContent='Добавить или восстановить в настройках';
       empty.append(label,link); feed.appendChild(empty);
-    } else if(plan.length) appendCards(14);
-    else { building=false; prepare(); return; }
+    } else appendCards(14);
     showBackground(feed.querySelector('.card'));
-    building=false;
+    } finally { building=false; }
+  }
+  function restoreFeed() {
+    if(!state || document.hidden || paging) return;
+    if(!feed.querySelector('.card') && Core.activeItems(state,Catalog).length) buildFeed();
+    const cards=[...feed.querySelectorAll('.card')];
+    const card=cards.includes(activeCard) ? activeCard : cards.find(x=>x.dataset.id===state.round?.resumeId) || cards[0];
+    if(!card) return;
+    // A cached page may return without a new intersection or image event.
+    observer.disconnect();cards.forEach(item=>observer.observe(item));
+    showBackground(card);
+    if(feed.clientHeight) {
+      feed.scrollTop=cards.indexOf(card)*feed.clientHeight;
+      activateCard(card);
+    }
   }
   async function recordActive() {
     const card=activeCard, key=Core.dateKey();
@@ -222,7 +253,7 @@
       if(next.round?.complete) rewards.length=0;
       else rewards.push(...result);
       presentReward();
-    } catch(error) { intervals.unshift(...pending); message(error.message); }
+    } catch(error) { intervals.unshift(...pending); reportError(error); }
     finally { viewPending=false; recoverSkipped(); if(activeCard!==card) recordActive(); }
   }
   function activateCard(card) {
@@ -314,7 +345,7 @@
           if(s.round?.id===completedId && s.round.complete) Core.ensureRound(s,Catalog);
         });
         applyState(update.state);
-      } catch(error) { intervals.unshift(...pending); message(error.message); return; }
+      } catch(error) { intervals.unshift(...pending); reportError(error); return; }
       finally { rewardClose.disabled=false; }
     }
     closeModal(rewardOverlay); rewardShowing=false; summaryRoundId=null;
@@ -450,7 +481,7 @@
     if(timerBusy || !intervals.length) return;
     const pending=intervals; intervals=[]; timerBusy=true;
     try { await Store.transaction(s=>{for(const [start,end] of pending) Core.addTime(s,start,end);}); }
-    catch(error) { intervals.unshift(...pending); message(error.message); }
+    catch(error) { intervals.unshift(...pending); reportError(error); }
     finally { timerBusy=false; }
   }
   function tick() {
@@ -469,14 +500,24 @@
   }
   for(const event of ['pointerdown','touchstart','keydown']) document.addEventListener(event,activity,{passive:true});
   feed.addEventListener('scroll',activity,{passive:true});
-  function pause() { finishPaging(false); touchStart=null; tick(); focused=false; flushTime(); }
-  async function resume() {
+  function pause() { cancelAnimationFrame(restoreFrame); finishPaging(false); touchStart=null; tick(); focused=false; flushTime(); }
+  function resume() {
     focused=!document.hidden && document.hasFocus(); lastTick=lastActivity=Date.now(); sessionMs=0;
-    try { applyState(await Store.read()); await prepare(); recordActive(); } catch(error) {message(error.message);}
+    if(resuming) return resuming;
+    resuming=(async()=>{
+      try {
+        restoreFeed();
+        await prepare();restoreFeed();recordActive();
+        cancelAnimationFrame(restoreFrame);
+        restoreFrame=requestAnimationFrame(restoreFeed);
+      } catch(error) {reportError(error);if(!error.pageHidden) showLoadError();}
+      finally { resuming=undefined; }
+    })();
+    return resuming;
   }
   window.addEventListener('blur',pause); window.addEventListener('pagehide',pause);
   window.addEventListener('focus',resume);
-  window.addEventListener('pageshow',e=>{if(e.persisted) resume();});
+  window.addEventListener('pageshow',resume);
   document.addEventListener('visibilitychange',()=>document.hidden?pause():resume());
   setInterval(()=>{tick();if(focused) recordActive();},1000);
   Store.subscribe(applyState);
@@ -487,5 +528,5 @@
       message('Данные перенесены. Текущий круг начат заново для точного учёта.');
       await Store.transaction(s=>{s.migrationNotice=false;});
     }
-  } catch(error) { message(error.message); }
+  } catch(error) { reportError(error); }
 })();

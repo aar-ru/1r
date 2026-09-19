@@ -10,7 +10,7 @@ const wait=async predicate=>{for(let n=0;n<200;n++){if(await predicate())return;
 class Assets extends ResourceLoader {
   fetch(url){const pathname=new URL(url).pathname;return pathname.startsWith('/assets/')?Promise.resolve(fs.readFileSync(path.join(project,pathname))):null;}
 }
-function setup(page='index.html',{idb=new IDBFactory(),denyStorage=false,channelHub=[],manualImages=false,reducedMotion=false}={}){
+function setup(page='index.html',{idb=new IDBFactory(),denyStorage=false,channelHub=[],manualImages=false,reducedMotion=false,configure}={}){
   const errors=[];
   const vc=new VirtualConsole();vc.on('jsdomError',error=>errors.push(error));
   const dom=new JSDOM(fs.readFileSync(path.join(project,page),'utf8'),{
@@ -46,6 +46,7 @@ function setup(page='index.html',{idb=new IDBFactory(),denyStorage=false,channel
       };
       w.HTMLElement.prototype.scrollBy=function(options){this.lastScroll=options;};
       w.HTMLElement.prototype.scrollTo=function(options){this.lastScrollTo=options;};
+      configure?.(w);
     }
   });
   return {dom,w:dom.window,errors};
@@ -54,6 +55,132 @@ async function loaded(env,page='index.html'){
   await wait(()=>env.w.AffirmStore && (page==='index.html'?env.w.document.querySelector('.card'):env.w.document.getElementById('activeCount').textContent!=='—'));
   assert.deepEqual(env.errors,[]);
 }
+function storageFaults(w) {
+  const timers=new Map();let timerId=0;
+  w.setTimeout=fn=>{timers.set(++timerId,fn);return timerId;};
+  w.clearTimeout=id=>timers.delete(id);
+  w.expireTimeouts=()=>{const pending=[...timers.values()];timers.clear();pending.forEach(fn=>fn());};
+  const faults=w.storageFaults={hangOpens:0,failOpens:0,hangTransactions:0,dropCompletions:0,opens:[],transactions:[],aborted:0,closed:0};
+  const open=w.indexedDB.open.bind(w.indexedDB);
+  w.indexedDB={open(...args){
+    if(faults.hangOpens>0) {faults.hangOpens--;const request={};faults.opens.push(request);return request;}
+    if(faults.failOpens>0) {
+      faults.failOpens--;const request={error:new w.DOMException('Storage is temporarily unavailable.','UnknownError')};
+      queueMicrotask(()=>request.onerror());return request;
+    }
+    const request=open(...args);
+    request.addEventListener('success',()=>{
+      const db=request.result,transaction=db.transaction.bind(db),close=db.close.bind(db);
+      db.close=()=>{faults.closed++;return close();};
+      db.transaction=(...args)=>{
+        if(faults.hangTransactions>0) {
+          faults.hangTransactions--;
+          const pending={objectStore:()=>({get:()=>({})}),abort(){faults.aborted++;}};
+          faults.transactions.push(pending);return pending;
+        }
+        const tx=transaction(...args);
+        if(faults.dropCompletions>0 && args[1]==='readwrite') {
+          faults.dropCompletions--;
+          Object.defineProperty(tx,'oncomplete',{get:()=>null,set:()=>{}});
+        }
+        return tx;
+      };
+    });
+    return request;
+  }};
+}
+
+test('return from settings repairs a missing feed immediately and keeps the viewed card and XP',async t=>{
+  const e=setup('index.html',{configure:storageFaults});t.after(()=>e.w.close());await loaded(e);
+  const w=e.w,d=w.document,feed=d.getElementById('feed');Object.defineProperty(feed,'clientHeight',{value:600});
+  const card=feed.children[3];w.testObserver.show(card);
+  await wait(async()=>(await w.AffirmStore.read()).round.resumeId===card.dataset.id);
+  const before=await w.AffirmStore.read();
+  w.dispatchEvent(new w.PageTransitionEvent('pagehide',{persisted:true}));
+  feed.replaceChildren();d.getElementById('background').replaceChildren();feed.scrollTop=1800;
+  w.dispatchEvent(new w.PageTransitionEvent('pageshow',{persisted:true}));
+  assert.equal(feed.querySelector('.card.active')?.dataset.id,card.dataset.id);
+  assert.equal(feed.scrollTop,0);assert.ok(feed.querySelector('.text')?.textContent);
+  await wait(async()=>(await w.AffirmStore.read()).revision>before.revision);
+  w.stepFrame(16);
+  const after=await w.AffirmStore.read();
+  assert.equal(after.round.id,before.round.id);assert.equal(after.game.totalXp,before.game.totalXp);
+  assert.deepEqual(after.round.seen,before.round.seen);assert.deepEqual(e.errors,[]);
+  assert.equal(d.getElementById('toast').classList.contains('show'),false,'normal navigation does not report a storage error');
+});
+test('pagehide aborts an unfinished transaction and a returned page can save again',async t=>{
+  const e=setup('settings.html',{configure:storageFaults});t.after(()=>e.w.close());await loaded(e,'settings.html');
+  const w=e.w;
+  await w.AffirmStore.transaction(s=>{s.saved=['u1'];});
+  w.storageFaults.hangTransactions=1;
+  const pending=w.AffirmStore.transaction(s=>{s.saved.push('u2');});
+  const rejected=assert.rejects(pending,{name:'AbortError'});
+  await wait(()=>w.storageFaults.transactions.length===1);
+  w.dispatchEvent(new w.PageTransitionEvent('pagehide',{persisted:true}));
+  await rejected;assert.equal(w.storageFaults.aborted,1);assert.ok(w.storageFaults.closed>0);
+  w.dispatchEvent(new w.PageTransitionEvent('pageshow',{persisted:true}));
+  const update=await w.AffirmStore.transaction(s=>{s.saved.push('u3');});
+  assert.deepEqual(update.state.saved,['u1','u3']);assert.equal(w.AffirmStore.temporary,false);
+  assert.deepEqual(e.errors,[]);
+});
+test('a stalled opening recovers the existing progress instead of switching to an empty temporary session',async t=>{
+  const idb=new IDBFactory(),seed=setup('settings.html',{idb});t.after(()=>seed.w.close());await loaded(seed,'settings.html');
+  const {state:before}=await seed.w.AffirmStore.transaction(s=>{
+    Core.ensureRound(s,seed.w.AffirmCatalog);Core.view(s,seed.w.AffirmCatalog,s.round.order[0],s.round.id,Core.dateKey());s.saved=['u1'];
+  });
+  const e=setup('index.html',{idb,configure:w=>{storageFaults(w);w.storageFaults.hangOpens=1;}});t.after(()=>e.w.close());
+  await wait(()=>e.w.storageFaults.opens.length===1);
+  assert.match(e.w.document.getElementById('feed').textContent,/Загружаю/);
+  e.w.expireTimeouts();await loaded(e);
+  const after=await e.w.AffirmStore.read();
+  assert.equal(e.w.AffirmStore.temporary,false);assert.deepEqual(after.saved,['u1']);
+  assert.equal(after.round.id,before.round.id);assert.equal(after.game.totalXp,before.game.totalXp);
+  assert.equal(e.w.document.querySelector('.card').dataset.id,before.round.resumeId);
+  let lateClosed=false;const late=e.w.storageFaults.opens[0];late.result={close(){lateClosed=true;}};late.onsuccess();
+  assert.equal(lateClosed,true,'a late opening cannot replace the working connection');
+});
+test('stalled reads and writes reconnect once without duplicating data',async t=>{
+  const e=setup('settings.html',{configure:storageFaults});t.after(()=>e.w.close());await loaded(e,'settings.html');
+  const w=e.w;await w.AffirmStore.transaction(s=>{s.saved=['u1'];});
+  w.storageFaults.hangTransactions=1;const read=w.AffirmStore.read();
+  await wait(()=>w.storageFaults.transactions.length===1);w.expireTimeouts();
+  assert.deepEqual((await read).saved,['u1']);
+  w.storageFaults.hangTransactions=1;const write=w.AffirmStore.transaction(s=>{s.saved.push('u2');});
+  await wait(()=>w.storageFaults.transactions.length===2);w.expireTimeouts();
+  assert.deepEqual((await write).state.saved,['u1','u2']);assert.equal(w.storageFaults.aborted,2);
+  assert.deepEqual(e.errors,[]);
+});
+test('a transient opening error keeps existing data instead of creating a temporary empty session',async t=>{
+  const idb=new IDBFactory(),seed=setup('settings.html',{idb});t.after(()=>seed.w.close());await loaded(seed,'settings.html');
+  await seed.w.AffirmStore.transaction(s=>{s.saved=['u2'];s.game.totalXp=81;});
+  const e=setup('index.html',{idb,configure:w=>{storageFaults(w);w.storageFaults.failOpens=1;}});t.after(()=>e.w.close());
+  await loaded(e);const state=await e.w.AffirmStore.read();
+  assert.equal(e.w.AffirmStore.temporary,false);assert.deepEqual(state.saved,['u2']);assert.equal(state.game.totalXp,81);
+});
+test('a missing completion callback never repeats an already committed write',async t=>{
+  const e=setup('settings.html',{configure:storageFaults});t.after(()=>e.w.close());await loaded(e,'settings.html');
+  const w=e.w;w.storageFaults.dropCompletions=1;
+  const pending=w.AffirmStore.transaction(s=>{s.game.totalXp+=7;});
+  const rejected=assert.rejects(pending,/не подтвердил сохранение/);
+  await wait(async()=>(await w.AffirmStore.read()).game.totalXp===7);
+  w.expireTimeouts();await rejected;
+  assert.equal((await w.AffirmStore.read()).game.totalXp,7);
+  await w.AffirmStore.transaction(s=>{s.game.totalXp++;});
+  assert.equal((await w.AffirmStore.read()).game.totalXp,8);assert.deepEqual(e.errors,[]);
+});
+test('persistent startup failure offers retry and a later successful load preserves stored data',async t=>{
+  const idb=new IDBFactory(),seed=setup('settings.html',{idb});t.after(()=>seed.w.close());await loaded(seed,'settings.html');
+  await seed.w.AffirmStore.transaction(s=>{s.saved=['u1'];s.game.totalXp=53;});
+  const e=setup('index.html',{idb,configure:w=>{storageFaults(w);w.storageFaults.hangTransactions=Infinity;}});t.after(()=>e.w.close());
+  const w=e.w;
+  await wait(()=>w.storageFaults.transactions.length===1);w.expireTimeouts();
+  await wait(()=>w.storageFaults.transactions.length>=2);w.expireTimeouts();
+  await wait(()=>w.document.querySelector('.feed-status button'));
+  w.storageFaults.hangTransactions=0;
+  w.document.querySelector('.feed-status button').click();await loaded(e);
+  assert.ok(w.document.querySelector('.card .text').textContent);assert.equal(w.AffirmStore.temporary,false);
+  const restored=await w.AffirmStore.read();assert.deepEqual(restored.saved,['u1']);assert.equal(restored.game.totalXp,53);
+});
 test('simultaneous tabs preserve both favorites and serialize duplicate view awards',async t=>{
   const idb=new IDBFactory(),hub=[];
   const a=setup('settings.html',{idb,channelHub:hub}),b=setup('settings.html',{idb,channelHub:hub});
@@ -205,9 +332,10 @@ test('back-forward cache return reloads content edited in another page',async t=
   const id=a.w.document.querySelector('.card').dataset.id;
   a.w.testObserver.show(a.w.document.querySelector('.card'));
   await wait(async()=>(await a.w.AffirmStore.read()).round.resumeId===id);
-  await b.w.AffirmStore.transaction(s=>{s.edits[id]={theme:'self',text:'Изменено на другой странице'};});
+  const {state:edited}=await b.w.AffirmStore.transaction(s=>{s.edits[id]={theme:'self',text:'Изменено на другой странице'};});
   a.w.dispatchEvent(new a.w.PageTransitionEvent('pageshow',{persisted:true}));
   await wait(()=>a.w.document.querySelector('.text')?.textContent==='Изменено на другой странице');
+  await wait(async()=>(await a.w.AffirmStore.read()).revision>edited.revision);
 });
 test('denied storage never causes a blank settings page',async t=>{
   const e=setup('settings.html',{idb:null,denyStorage:true});
