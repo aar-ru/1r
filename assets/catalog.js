@@ -2093,7 +2093,7 @@ window.AffirmCatalog = {
     },
     {
       "id": "u390",
-      "theme": "yana",
+      "theme": "fulfilled",
       "text": "С Яной отношения крепнут каждый день."
     },
     {
