@@ -102,7 +102,16 @@
     const seen = new Set(state.round.seen);
     const pending = state.round.order.filter(id => !seen.has(id));
     const ids = state.round.resumeId ? [state.round.resumeId, ...pending] : pending;
-    return unique(ids).map(id => byId.get(id)).filter(Boolean);
+    // Group the display queue, not the saved round: old progress and backups stay valid.
+    // The resumed card puts its theme first; each theme keeps its shuffled card order.
+    const themes = new Map();
+    for (const id of unique(ids)) {
+      const item = byId.get(id);
+      if (!item) continue;
+      if (!themes.has(item.theme)) themes.set(item.theme, []);
+      themes.get(item.theme).push(item);
+    }
+    return [...themes.values()].flat();
   }
   function view(state, catalog, id, roundId, dayKey) {
     const rewards = [];

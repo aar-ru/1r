@@ -80,6 +80,35 @@ test('rendering 14 cards consumes nothing; reload resumes the viewed card withou
   b.w.testObserver.show(resumed);await wait(()=>b.w.document.querySelector('.view-count').textContent==='1');
   state=await b.w.AffirmStore.read();assert.equal(state.game.totalXp,1);assert.equal(state.round.seen.length,1);
 });
+test('an existing mixed queue renders and appends theme blocks while clicks keep the 100ms transition',async t=>{
+  const idb=new IDBFactory(),settings=setup('settings.html',{idb});t.after(()=>settings.w.close());
+  await loaded(settings,'settings.html');
+  const themes=['self','calm','focus'];
+  const {state:before}=await settings.w.AffirmStore.transaction(s=>{
+    s.deleted=settings.w.AffirmCatalog.items.map(x=>x.id);
+    s.custom=Array.from({length:6},(_,i)=>i+1).flatMap(n=>themes.map(theme=>({id:`topic-${theme}-${n}`,theme,text:`${theme} ${n}`})));
+    Core.ensureRound(s,settings.w.AffirmCatalog,()=>0.99);
+    Core.view(s,settings.w.AffirmCatalog,'topic-calm-1',s.round.id,Core.dateKey());
+  });
+  const e=setup('index.html',{idb});t.after(()=>e.w.close());await loaded(e);
+  const feed=e.w.document.getElementById('feed');Object.defineProperty(feed,'clientHeight',{value:600});
+  const expected=['calm','self','focus'].flatMap(theme=>Array.from({length:6},(_,i)=>`topic-${theme}-${i+1}`));
+  assert.deepEqual([...feed.children].map(card=>card.dataset.id),expected.slice(0,14));
+  e.w.testObserver.show(feed.firstElementChild);
+  for(let n=1;n<=12;n++) {
+    feed.children[n-1].querySelector('.text').click();
+    e.w.stepFrame(50);assert.ok(feed.scrollTop>(n-1)*600 && feed.scrollTop<n*600);
+    e.w.stepFrame(50);assert.equal(feed.scrollTop,n*600);
+    await wait(async()=>(await e.w.AffirmStore.read()).round.resumeId===expected[n]);
+  }
+  assert.deepEqual([...feed.children].map(card=>card.dataset.id),expected);
+  const state=await e.w.AffirmStore.read();
+  assert.equal(state.round.id,before.round.id);assert.equal(state.game.totalXp,13);
+  const reopened=setup('index.html',{idb});t.after(()=>reopened.w.close());await loaded(reopened);
+  assert.deepEqual([...reopened.w.document.querySelectorAll('.card')].map(card=>card.dataset.id),expected.slice(12));
+  assert.equal((await reopened.w.AffirmStore.read()).game.totalXp,13);
+  assert.deepEqual(e.errors,[]);assert.deepEqual(reopened.errors,[]);
+});
 test('untrusted text renders literally in the feed and saved drawer',async t=>{
   const e=setup();t.after(()=>e.w.close());await loaded(e);
   const text='<img src=x onerror="window.injected=true"><b>Affirm</b>';

@@ -2,7 +2,62 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const Core = require('../assets/state.js');
 const catalog = { themes: { self: { label:'Я',images:['test.jpg'] } }, items: [1,2,3].map(n=>({id:`u${n}`,theme:'self',text:`Текст ${n}`})) };
+const topicNames=['self','calm','focus'];
+const topicCatalog={themes:Object.fromEntries(topicNames.map(theme=>[theme,{label:theme,images:['test.jpg']}])),
+  items:[1,2,3].flatMap(n=>topicNames.map(theme=>({id:`${theme}${n}`,theme,text:`${theme} ${n}`})))};
 const day='2026-09-17';
+
+function assertThemeBlocks(items) {
+  const blocks=items.filter((item,i)=>!i || item.theme!==items[i-1].theme).map(item=>item.theme);
+  assert.equal(blocks.length,new Set(blocks).size,'each theme occupies one uninterrupted block');
+}
+test('a shuffled round displays whole themes, covers every card and keeps variation within themes',()=>{
+  const orders=[];
+  for(const random of [()=>0.99,()=>0]) {
+    const s=Core.empty();Core.ensureRound(s,topicCatalog,random);
+    const before=structuredClone(s),items=Core.preview(s,topicCatalog);
+    assertThemeBlocks(items);
+    assert.deepEqual(items.map(x=>x.id).sort(),topicCatalog.items.map(x=>x.id).sort());
+    assert.deepEqual(Core.preview(s,topicCatalog),items,'preloading does not reshuffle the feed');
+    assert.deepEqual(s,before,'grouping does not consume cards or change saved progress');
+    orders.push(items.filter(x=>x.theme==='self').map(x=>x.id));
+  }
+  assert.notDeepEqual(orders[0],orders[1],'cards within a theme are still shuffled');
+});
+test('an old mixed round resumes its current theme without losing progress, including after backup restore',()=>{
+  const s=Core.empty();Core.ensureRound(s,topicCatalog,()=>0.99);
+  const round=s.round.id;
+  for(const id of ['self1','focus1','calm1']) Core.view(s,topicCatalog,id,round,day);
+  Core.addTime(s,1000,6000);s.saved=['self1'];
+  const before=structuredClone(s);
+  Core.ensureRound(s,topicCatalog,Math.random,false);
+  const ids=Core.preview(s,topicCatalog).map(x=>x.id);
+  assert.deepEqual(ids,['calm1','calm2','calm3','self2','self3','focus2','focus3']);
+  assert.deepEqual(s,before);
+  const restored=Core.restoreBackup(JSON.parse(JSON.stringify(s)),topicCatalog);
+  assert.deepEqual(restored,s);
+  assert.deepEqual(Core.preview(restored,topicCatalog).map(x=>x.id),ids);
+  for(const id of ids) Core.view(restored,topicCatalog,id,round,day);
+  assert.equal(restored.game.totalCards,9);assert.equal(restored.game.totalXp,129);
+  assert.equal(restored.game.cycles,1);assert.equal(restored.round.summary.timeMs,5000);
+  Core.view(restored,topicCatalog,ids.at(-1),round,day);
+  Core.ensureRound(restored,topicCatalog,Math.random,false);
+  assert.equal(restored.round.id,round);assert.equal(restored.game.totalXp,129);
+});
+test('grouping respects edited themes, custom cards and deletions without resetting a theme edit',()=>{
+  const s=Core.empty();s.deleted=['self3'];s.custom=[{id:'custom',theme:'calm',text:'Своя карточка'}];
+  Core.ensureRound(s,topicCatalog,()=>0.99);const round=s.round.id;
+  Core.view(s,topicCatalog,'focus1',round,day);
+  s.edits.calm1={theme:'focus',text:'Спокойная уверенность'};
+  Core.ensureRound(s,topicCatalog);
+  const items=Core.preview(s,topicCatalog);
+  assert.equal(s.round.id,round);assert.deepEqual(s.round.seen,['focus1']);
+  assertThemeBlocks(items);
+  assert.deepEqual(items.slice(0,4).map(x=>x.id),['focus1','calm1','focus2','focus3']);
+  assert.equal(items.find(x=>x.id==='custom').theme,'calm');
+  assert.equal(items.some(x=>x.id==='self3'),false);
+  assert.deepEqual(items.map(x=>x.id).sort(),Core.activeItems(s,topicCatalog).map(x=>x.id).sort());
+});
 
 test('preloading and reopening never consume unread cards or award a round',()=>{
   const s=Core.empty(); Core.ensureRound(s,catalog);
