@@ -2705,6 +2705,11 @@ window.AffirmCatalog = {
       "id": "u518",
       "theme": "yana",
       "text": "Мы с Яной никогда не устаем друг от друга"
+    },
+    {
+      "id": "u519",
+      "theme": "self",
+      "text": "Я люблю себя"
     }
   ]
 };
